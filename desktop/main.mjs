@@ -6,9 +6,14 @@ import { fileURLToPath } from 'node:url';
 import { startWorkbenchServer } from './local-server.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const workbenchRoot = resolve(__dirname, '..');
-const frontendRoot = join(workbenchRoot, 'astro-blog', 'dist', 'client');
-const backendRoot = join(workbenchRoot, 'python-backend');
+const developmentRoot = resolve(__dirname, '..');
+const resourceRoot = app.isPackaged ? process.resourcesPath : developmentRoot;
+const frontendRoot = app.isPackaged
+  ? join(resourceRoot, 'web')
+  : join(resourceRoot, 'astro-blog', 'dist', 'client');
+const backendRoot = app.isPackaged
+  ? join(resourceRoot, 'backend')
+  : join(resourceRoot, 'python-backend');
 const backendPort = Number(process.env.WORKBENCH_BACKEND_PORT || 1236);
 const sitePort = Number(process.env.WORKBENCH_SITE_PORT || 4410);
 const settingsPath = () => join(app.getPath('userData'), 'desktop-settings.json');
