@@ -381,6 +381,8 @@ async function captureQaScreenshot() {
     capabilityImportOpen: !!document.querySelector('.capability-import-panel'),
     capabilityEnabled: [...document.querySelectorAll('.capability-switch input')].slice(0, 4).map(input => input.checked),
     capabilityDisabledCards: document.querySelectorAll('.capability-card.disabled').length,
+    recentTaskCount: document.querySelectorAll('.recent-task').length,
+    recentDeleteButtons: document.querySelectorAll('.recent-task-delete').length,
     assetNotice: document.querySelector('.assets-view .workspace-notice')?.textContent?.trim() || '',
     settingsVisible: !!document.querySelector('.settings-view'),
     articleRows: document.querySelectorAll('.article-stream-item').length,

@@ -97,20 +97,30 @@
           </div>
           <div v-if="loadingSessions" class="recent-empty">正在同步...</div>
           <div v-else-if="sessions.length === 0" class="recent-empty">这里会记录你的协作任务</div>
-          <button
+          <div
             v-for="session in sessions.slice(0, 5)"
             :key="session.id"
-            type="button"
             class="recent-task"
             :class="{ active: session.id === sessionId }"
-            @click="loadTaskSession(session.id)"
           >
-            <span class="recent-dot" />
-            <span class="recent-copy">
-              <strong>{{ session.title || '未命名任务' }}</strong>
-              <small>{{ session.preview || '暂无摘要' }}</small>
-            </span>
-          </button>
+            <button type="button" class="recent-task-open" @click="loadTaskSession(session.id)">
+              <span class="recent-dot" />
+              <span class="recent-copy">
+                <strong>{{ session.title || '未命名任务' }}</strong>
+                <small>{{ session.preview || '暂无摘要' }}</small>
+              </span>
+            </button>
+            <button
+              type="button"
+              class="recent-task-delete"
+              :disabled="isRunning && session.id === sessionId"
+              :title="isRunning && session.id === sessionId ? '请先终止正在执行的任务' : '删除任务'"
+              aria-label="删除任务"
+              @click="deleteTaskSession(session)"
+            >
+              <svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3m-8 0l1 13h8l1-13M10 11v5M14 11v5" /></svg>
+            </button>
+          </div>
         </section>
 
         <div class="nav-footer">
@@ -1488,6 +1498,31 @@ async function loadTaskSession(id: string) {
   }
 }
 
+async function deleteTaskSession(session: SessionItem) {
+  if (isRunning.value && session.id === sessionId.value) {
+    return;
+  }
+  if (!window.confirm(`删除任务「${session.title || '未命名任务'}」？此操作会同时删除该任务的对话记录。`)) {
+    return;
+  }
+  try {
+    const response = await fetch(`/api/psychological-chat/session/${encodeURIComponent(session.id)}`, {
+      method: 'DELETE',
+      headers: { token: getToken() || '' },
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.code !== '200') {
+      throw new Error(payload.detail || payload.msg || '任务删除失败');
+    }
+    sessions.value = sessions.value.filter(item => item.id !== session.id);
+    if (sessionId.value === session.id) {
+      startNewTask();
+    }
+  } catch (error) {
+    window.alert(error instanceof Error ? error.message : '任务删除失败');
+  }
+}
+
 async function fetchCapabilities(force = false) {
   if (!loggedIn.value) return;
   if (!force && capabilities.value.length > 0) return;
@@ -2317,16 +2352,69 @@ onUnmounted(() => {
 
 .recent-task {
   width: 100%;
-  border: 0;
-  background: transparent;
-  text-align: left;
-  display: flex;
-  gap: 9px;
-  padding: 9px 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
   border-radius: 9px;
   color: inherit;
-  text-decoration: none;
   transition: background 150ms ease;
+}
+
+.recent-task-open {
+  min-width: 0;
+  padding: 6px 5px;
+  border: 0;
+  border-radius: 7px;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recent-task-delete {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: #a1a7b6;
+  opacity: 0.42;
+  cursor: pointer;
+  transition: opacity 150ms ease, color 150ms ease, background 150ms ease;
+}
+
+.recent-task:hover .recent-task-delete,
+.recent-task-delete:focus-visible {
+  opacity: 1;
+}
+
+.recent-task-delete:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.08);
+  color: #cc4141;
+}
+
+.recent-task-delete:disabled {
+  opacity: 0.2;
+  cursor: not-allowed;
+}
+
+.recent-task-delete svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .recent-task:hover {
@@ -2353,6 +2441,7 @@ onUnmounted(() => {
 
 .recent-copy {
   min-width: 0;
+  flex: 1;
   display: grid;
   gap: 3px;
 }
