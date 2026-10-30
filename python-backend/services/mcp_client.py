@@ -298,6 +298,31 @@ def get_mcp_tools() -> list[dict]:
     return tools
 
 
+def get_mcp_catalog() -> list[dict]:
+    """Return connected MCP servers and tool schemas without exposing credentials."""
+    catalog = []
+    for name, server in _servers.items():
+        try:
+            tools = server.list_tools()
+        except Exception as exc:
+            tools = []
+            print(f"[MCP:{name}] catalog error: {exc}")
+        catalog.append({
+            "name": name,
+            "transport": "http" if isinstance(server, MCPHttpServer) else "stdio",
+            "connected": True,
+            "tools": [
+                {
+                    "name": tool["function"]["name"],
+                    "description": tool["function"].get("description", ""),
+                    "parameters": tool["function"].get("parameters", {}),
+                }
+                for tool in tools
+            ],
+        })
+    return catalog
+
+
 async def call_mcp_tool(full_name: str, args: dict) -> Optional[str]:
     """调用 MCP 工具（线程池执行，不阻塞事件循环）"""
     parts = full_name.split("__", 1)

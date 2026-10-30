@@ -291,8 +291,13 @@
                 <button type="button" class="article-stream-open" @click="openBlogArticle(article)">
                   <span class="article-order">{{ String(index + 1).padStart(2, '0') }}</span>
                   <span class="article-thumb">
-                    <img v-if="article.coverImage" :src="article.coverImage" :alt="article.title" loading="lazy" />
-                    <span v-else>R</span>
+                    <span class="article-cover-fallback">{{ (article.categoryName || '文章').slice(0, 1) }}</span>
+                    <img
+                      :src="articleCoverUrl(article)"
+                      :alt="article.title"
+                      loading="lazy"
+                      @error="($event.target as HTMLImageElement).style.display = 'none'"
+                    />
                   </span>
                   <span class="article-copy">
                     <span class="article-meta-line">
@@ -318,67 +323,185 @@
           <section v-else-if="activeSection === 'assets'" class="workspace-view assets-view">
             <div class="workspace-view-toolbar">
               <div class="workspace-view-heading compact">
-                <span class="eyebrow">ASSET LIBRARY</span>
-                <h1>素材库</h1>
-                <p>只聚合当前账号可用的文件、音乐和博客封面。</p>
+                <span class="eyebrow">AGENT CAPABILITY LIBRARY</span>
+                <h1>能力资产库</h1>
+                <p>集中查看 Agent 的 Skill、MCP 与 Prompt，保留触发词、工具映射和原始内容。</p>
               </div>
-              <label class="library-upload" :class="{ disabled: uploadingAsset }">
-                {{ uploadingAsset ? '上传中...' : '上传素材' }}
-                <input type="file" :disabled="uploadingAsset" @change="uploadAsset" />
-              </label>
+              <button type="button" class="capability-import-button" @click="openCapabilityImport">
+                <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+                导入能力
+              </button>
             </div>
 
             <div v-if="!loggedIn" class="workspace-notice">
-              <strong>登录后查看私人素材库</strong>
+              <strong>登录后查看能力资产库</strong>
               <a href="/auth/login">去登录</a>
             </div>
-            <div v-else-if="assetLoading" class="workspace-notice">正在同步素材...</div>
-            <div v-else-if="assetError" class="workspace-notice error">
-              <span>{{ assetError }}</span>
-              <button type="button" @click="fetchAssets(true)">重试</button>
+            <div v-else-if="capabilityLoading" class="workspace-notice">正在读取能力目录...</div>
+            <div v-else-if="capabilityError" class="workspace-notice error">
+              <span>{{ capabilityError }}</span>
+              <button type="button" @click="fetchCapabilities(true)">重试</button>
             </div>
             <template v-else>
-              <div class="asset-filters">
+              <div class="capability-kind-filters">
                 <button
-                  v-for="filter in assetFilters"
-                  :key="filter.value"
+                  v-for="filter in capabilityKinds"
+                  :key="filter.key"
                   type="button"
-                  :class="{ active: assetFilter === filter.value }"
-                  @click="assetFilter = filter.value"
+                  :class="{ active: capabilityKind === filter.key }"
+                  @click="capabilityKind = filter.key"
                 >
                   {{ filter.label }}
                   <span>{{ filter.count }}</span>
                 </button>
               </div>
-              <div v-if="filteredAssets.length" class="asset-grid">
-                <article v-for="asset in filteredAssets" :key="asset.id" class="asset-card">
-                  <div class="asset-preview" :class="`kind-${asset.kind}`">
-                    <img v-if="asset.kind === 'image'" :src="asset.url" :alt="asset.name" loading="lazy" />
-                    <audio v-else-if="asset.kind === 'audio'" :src="asset.url" controls preload="none" />
-                    <span v-else class="asset-file-mark">{{ assetKindLabel(asset.kind).slice(0, 1) }}</span>
+              <div class="capability-category-bar">
+                <button
+                  v-for="category in capabilityCategories"
+                  :key="category.name"
+                  type="button"
+                  :class="{ active: capabilityCategory === category.name }"
+                  @click="capabilityCategory = category.name"
+                >
+                  {{ category.name }}
+                  <span v-if="category.count">{{ category.count }}</span>
+                </button>
+                <label class="capability-search">
+                  <svg viewBox="0 0 24 24"><path d="M11 18a7 7 0 100-14 7 7 0 000 14zm5-2l5 5" /></svg>
+                  <input v-model.trim="capabilitySearch" type="search" placeholder="搜索能力、触发词或工具" />
+                </label>
+              </div>
+
+              <div v-if="filteredCapabilities.length" class="capability-grid">
+                <article
+                  v-for="capability in filteredCapabilities"
+                  :key="capability.id"
+                  class="capability-card"
+                  :class="`is-${capability.kind}`"
+                >
+                  <header class="capability-card-head">
+                    <span class="capability-mark">{{ capabilityKindMark(capability.kind) }}</span>
+                    <span class="capability-title">
+                      <strong>{{ capability.name }}</strong>
+                      <small>{{ capabilityKindLabel(capability.kind) }} · {{ capabilitySourceLabel(capability.source) }}</small>
+                    </span>
+                    <span class="capability-status" :class="`status-${capability.status}`">{{ capabilityStatusLabel(capability.status) }}</span>
+                  </header>
+                  <div class="capability-category">{{ capability.category }}</div>
+                  <p class="capability-description">{{ capability.description }}</p>
+
+                  <div v-if="capability.tools.length || capability.links.length" class="capability-mapping">
+                    <span class="mapping-label">映射</span>
+                    <span v-for="tool in capability.tools.slice(0, 3)" :key="tool" class="mapping-tool">{{ tool }}</span>
+                    <span v-if="capability.tools.length > 3" class="mapping-more">+{{ capability.tools.length - 3 }}</span>
+                    <span v-if="capability.links.length" class="mapping-link">{{ capability.links.length }} 个关联文档</span>
                   </div>
-                  <div class="asset-card-body">
-                    <div class="asset-card-title">
-                      <strong>{{ asset.name }}</strong>
-                      <span>{{ assetSourceLabel(asset.source) }}</span>
-                    </div>
-                    <div class="asset-card-meta">
-                      <span>{{ assetKindLabel(asset.kind) }}</span>
-                      <span v-if="asset.size">{{ formatAssetSize(asset.size) }}</span>
-                      <span v-if="asset.created_at">{{ formatAssetDate(asset.created_at) }}</span>
-                    </div>
-                    <div class="asset-card-actions">
-                      <button type="button" @click="useAssetInTask(asset)">引用到任务</button>
-                      <a :href="asset.url" target="_blank">打开</a>
-                    </div>
+
+                  <div v-if="capability.triggers.length" class="capability-triggers">
+                    <span v-for="trigger in capability.triggers.slice(0, 4)" :key="trigger">{{ trigger }}</span>
+                    <span v-if="capability.triggers.length > 4">+{{ capability.triggers.length - 4 }}</span>
                   </div>
+
+                  <footer class="capability-card-actions">
+                    <button type="button" @click="openCapabilityDetail(capability)">查看内容</button>
+                    <button type="button" @click="copyCapability(capability)">复制</button>
+                    <button type="button" @click="useCapabilityInTask(capability)">带入任务</button>
+                    <button
+                      v-if="capability.source === 'imported'"
+                      type="button"
+                      class="danger"
+                      @click="deleteCapability(capability)"
+                    >
+                      移除
+                    </button>
+                  </footer>
                 </article>
               </div>
-              <div v-else class="workspace-notice">当前分类还没有素材。</div>
+              <div v-else class="workspace-notice">当前筛选条件下没有能力资产。</div>
+              <div v-if="capabilityMessage" class="capability-message">{{ capabilityMessage }}</div>
             </template>
           </section>
 
-          <section v-else-if="activeSection === 'profile'" class="workspace-view settings-view">
+          <Transition name="modal-fade">
+            <div v-if="capabilityDetail" class="capability-modal" @click.self="capabilityDetail = null">
+              <section class="capability-detail-panel">
+                <header class="capability-detail-head">
+                  <div>
+                    <span class="eyebrow">{{ capabilityKindLabel(capabilityDetail.kind) }}</span>
+                    <h2>{{ capabilityDetail.name }}</h2>
+                    <p>{{ capabilityDetail.category }} · {{ capabilitySourceLabel(capabilityDetail.source) }}</p>
+                  </div>
+                  <button type="button" class="capability-modal-close" @click="capabilityDetail = null">
+                    <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                  </button>
+                </header>
+                <div class="capability-detail-meta">
+                  <span>{{ capabilityDetail.tools.length }} 个工具映射</span>
+                  <span>{{ capabilityDetail.triggers.length }} 个触发词</span>
+                  <span>{{ capabilityDetail.links.length }} 个关联文档</span>
+                </div>
+                <pre v-if="capabilityDetail.kind === 'mcp' || capabilityDetail.source === 'imported' && capabilityDetail.kind === 'mcp'">{{ capabilityConfigText(capabilityDetail) }}</pre>
+                <div v-else class="capability-document agent-markdown" v-html="renderMarkdown(capabilityDetail.content)" />
+                <footer class="capability-detail-foot">
+                  <button type="button" @click="copyCapability(capabilityDetail)">复制原始内容</button>
+                  <button type="button" @click="useCapabilityInTask(capabilityDetail)">带入当前任务</button>
+                </footer>
+              </section>
+            </div>
+          </Transition>
+
+          <Transition name="modal-fade">
+            <div v-if="capabilityImportOpen" class="capability-modal" @click.self="capabilityImportOpen = false">
+              <form class="capability-import-panel" @submit.prevent="importCapability">
+                <header class="capability-detail-head">
+                  <div>
+                    <span class="eyebrow">IMPORT CAPABILITY</span>
+                    <h2>导入能力资产</h2>
+                    <p>支持 Skill、Prompt 和 MCP JSON 配置。</p>
+                  </div>
+                  <button type="button" class="capability-modal-close" @click="capabilityImportOpen = false">
+                    <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                  </button>
+                </header>
+                <div class="capability-import-kind">
+                  <button
+                    v-for="kind in capabilityImportKinds"
+                    :key="kind"
+                    type="button"
+                    :class="{ active: capabilityImportForm.kind === kind }"
+                    @click="capabilityImportForm.kind = kind"
+                  >
+                    {{ capabilityKindLabel(kind) }}
+                  </button>
+                </div>
+                <div class="capability-import-grid">
+                  <label>名称<input v-model="capabilityImportForm.name" required maxlength="160" placeholder="例如：Article Reviewer" /></label>
+                  <label>分类<input v-model="capabilityImportForm.category" maxlength="80" placeholder="例如：内容创作" /></label>
+                </div>
+                <label>说明<input v-model="capabilityImportForm.description" maxlength="600" placeholder="一句话说明用途" /></label>
+                <label class="capability-file-import">
+                  <span>从文件读取</span>
+                  <input type="file" accept=".md,.skill,.json" @change="loadCapabilityFile" />
+                </label>
+                <label>
+                  {{ capabilityImportForm.kind === 'mcp' ? 'MCP JSON 配置' : '原始内容' }}
+                  <textarea
+                    v-model="capabilityImportForm.content"
+                    placeholder="粘贴 Prompt、Skill 原始内容，或 MCP JSON 配置"
+                    required
+                  />
+                </label>
+                <p class="capability-import-note">Skill / Prompt 会按触发词与工具自动建立映射。MCP 配置只保存为待启用资产，不会自动执行外部命令。</p>
+                <div v-if="capabilityImportError" class="capability-import-error">{{ capabilityImportError }}</div>
+                <footer class="capability-detail-foot">
+                  <button type="button" @click="capabilityImportOpen = false">取消</button>
+                  <button type="submit" :disabled="capabilityImportSaving">{{ capabilityImportSaving ? '导入中...' : '导入到能力库' }}</button>
+                </footer>
+              </form>
+            </div>
+          </Transition>
+
+          <section v-if="activeSection === 'profile'" class="workspace-view settings-view">
             <div class="workspace-view-heading compact">
               <span class="eyebrow">WORKBENCH SETTINGS</span>
               <h1>个人设置</h1>
@@ -657,18 +780,33 @@ interface TaskEvent {
   format?: string;
 }
 
-interface AssetItem {
+type CapabilityKind = 'skill' | 'mcp' | 'prompt';
+
+interface CapabilityItem {
   id: string;
+  kind: CapabilityKind;
   name: string;
-  url: string;
-  kind: 'image' | 'audio' | 'document' | 'file';
-  source: 'profile' | 'music' | 'agent_upload' | 'article';
-  mime_type?: string;
-  size: number;
-  created_at: string;
+  category: string;
+  description: string;
+  source: 'builtin' | 'runtime' | 'imported';
+  status: string;
+  triggers: string[];
+  tools: string[];
+  links: string[];
+  content: string;
+  config: Record<string, any>;
+  metadata: Record<string, any>;
 }
 
-type AssetFilter = 'all' | AssetItem['kind'];
+type CapabilityFilter = 'all' | CapabilityKind;
+
+interface CapabilityImportForm {
+  kind: CapabilityKind;
+  name: string;
+  category: string;
+  description: string;
+  content: string;
+}
 
 interface BlogArticle {
   id: string;
@@ -716,11 +854,32 @@ const desktopVersion = ref('');
 const workspaceRoot = ref('');
 const agentMode = ref<AgentMode>('plan');
 const defaultAgentMode = ref<AgentMode>('plan');
-const assets = ref<AssetItem[]>([]);
-const assetFilter = ref<AssetFilter>('all');
-const assetLoading = ref(false);
-const assetError = ref('');
-const uploadingAsset = ref(false);
+const capabilities = ref<CapabilityItem[]>([]);
+const capabilityKinds = ref<{ key: CapabilityFilter; label: string; count: number }[]>([
+  { key: 'all', label: '全部', count: 0 },
+  { key: 'skill', label: 'Skill', count: 0 },
+  { key: 'mcp', label: 'MCP', count: 0 },
+  { key: 'prompt', label: 'Prompt', count: 0 },
+]);
+const capabilityCategories = ref<{ name: string; count: number }[]>([{ name: '全部', count: 0 }]);
+const capabilityKind = ref<CapabilityFilter>('all');
+const capabilityCategory = ref('全部');
+const capabilitySearch = ref('');
+const capabilityLoading = ref(false);
+const capabilityError = ref('');
+const capabilityMessage = ref('');
+const capabilityDetail = ref<CapabilityItem | null>(null);
+const capabilityImportOpen = ref(false);
+const capabilityImportSaving = ref(false);
+const capabilityImportError = ref('');
+const capabilityImportKinds: CapabilityKind[] = ['skill', 'mcp', 'prompt'];
+const capabilityImportForm = ref<CapabilityImportForm>({
+  kind: 'prompt',
+  name: '',
+  category: '自定义',
+  description: '',
+  content: '',
+});
 const blogArticles = ref<BlogArticle[]>([]);
 const articleTotal = ref(0);
 const articleLoading = ref(false);
@@ -800,22 +959,20 @@ const articleSyncLabel = computed(() => {
   }).format(articleUpdatedAt.value);
   return `已同步 ${time}`;
 });
-const filteredAssets = computed(() => {
-  if (assetFilter.value === 'all') return assets.value;
-  return assets.value.filter(asset => asset.kind === assetFilter.value);
-});
-const assetFilters = computed(() => {
-  const counts = assets.value.reduce<Record<string, number>>((result, asset) => {
-    result[asset.kind] = (result[asset.kind] || 0) + 1;
-    return result;
-  }, {});
-  return [
-    { value: 'all' as AssetFilter, label: '全部', count: assets.value.length },
-    { value: 'image' as AssetFilter, label: '图片', count: counts.image || 0 },
-    { value: 'audio' as AssetFilter, label: '音频', count: counts.audio || 0 },
-    { value: 'document' as AssetFilter, label: '文档', count: counts.document || 0 },
-    { value: 'file' as AssetFilter, label: '其他', count: counts.file || 0 },
-  ];
+const filteredCapabilities = computed(() => {
+  const query = capabilitySearch.value.toLowerCase();
+  return capabilities.value.filter(capability => {
+    if (capabilityKind.value !== 'all' && capability.kind !== capabilityKind.value) return false;
+    if (capabilityCategory.value !== '全部' && capability.category !== capabilityCategory.value) return false;
+    if (!query) return true;
+    return [
+      capability.name,
+      capability.description,
+      capability.category,
+      ...capability.triggers,
+      ...capability.tools,
+    ].some(value => value.toLowerCase().includes(query));
+  });
 });
 const todayLabel = new Intl.DateTimeFormat('zh-CN', {
   month: 'long',
@@ -924,6 +1081,10 @@ function formatArticleDate(value?: string) {
     : new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'short', day: 'numeric' }).format(date);
 }
 
+function articleCoverUrl(article: BlogArticle) {
+  return article.coverImage || `https://picsum.photos/seed/${encodeURIComponent(article.id)}/640/360`;
+}
+
 async function fetchBlogArticles(force = false) {
   if (articleLoading.value) return;
   articleLoading.value = true;
@@ -953,7 +1114,7 @@ function selectSection(item: { key: string; href: string }) {
   if (item.key === 'articles') {
     void fetchBlogArticles();
   } else if (item.key === 'assets') {
-    fetchAssets();
+    fetchCapabilities();
   }
 }
 
@@ -1315,92 +1476,169 @@ async function loadTaskSession(id: string) {
   }
 }
 
-async function fetchAssets(force = false) {
+async function fetchCapabilities(force = false) {
   if (!loggedIn.value) return;
-  if (!force && assets.value.length > 0) return;
-  assetLoading.value = true;
-  assetError.value = '';
+  if (!force && capabilities.value.length > 0) return;
+  capabilityLoading.value = true;
+  capabilityError.value = '';
   try {
     const response = await fetch('/api/workbench/assets', {
       headers: { token: getToken() || '' },
     });
     const payload = await response.json();
     if (!response.ok || payload.code !== '200') {
-      throw new Error(payload.detail || payload.msg || '素材库加载失败');
+      throw new Error(payload.detail || payload.msg || '能力资产库加载失败');
     }
-    assets.value = payload.data || [];
+    capabilities.value = payload.data?.items || [];
+    capabilityKinds.value = payload.data?.kinds || capabilityKinds.value;
+    capabilityCategories.value = payload.data?.categories || [{ name: '全部', count: capabilities.value.length }];
+    if (!capabilityCategories.value.some(category => category.name === capabilityCategory.value)) {
+      capabilityCategory.value = '全部';
+    }
   } catch (error) {
-    assetError.value = error instanceof Error ? error.message : '素材库加载失败';
+    capabilityError.value = error instanceof Error ? error.message : '能力资产库加载失败';
   } finally {
-    assetLoading.value = false;
+    capabilityLoading.value = false;
   }
 }
 
-async function uploadAsset(event: Event) {
+function openCapabilityImport() {
+  capabilityImportError.value = '';
+  capabilityImportForm.value = {
+    kind: 'prompt',
+    name: '',
+    category: '自定义',
+    description: '',
+    content: '',
+  };
+  capabilityImportOpen.value = true;
+}
+
+async function loadCapabilityFile(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
   if (!file) return;
-  uploadingAsset.value = true;
-  assetError.value = '';
+  const ext = file.name.split('.').pop()?.toLowerCase();
+  capabilityImportForm.value.kind = ext === 'json' ? 'mcp' : ext === 'skill' ? 'skill' : 'prompt';
+  capabilityImportForm.value.content = await file.text();
+  if (!capabilityImportForm.value.name) {
+    capabilityImportForm.value.name = file.name.replace(/\.(md|skill|json)$/i, '');
+  }
+  input.value = '';
+}
+
+async function importCapability() {
+  capabilityImportSaving.value = true;
+  capabilityImportError.value = '';
   try {
-    const form = new FormData();
-    form.append('file', file);
-    const response = await fetch('/api/file/upload/agent', {
+    const content = capabilityImportForm.value.content.trim();
+    const config: Record<string, any> = {};
+    if (capabilityImportForm.value.kind === 'mcp') {
+      const parsed = JSON.parse(content);
+      if (!parsed || typeof parsed !== 'object') throw new Error('MCP 配置必须是 JSON 对象');
+      Object.assign(config, parsed);
+    }
+    const response = await fetch('/api/workbench/assets/import', {
       method: 'POST',
-      headers: { token: getToken() || '' },
-      body: form,
+      headers: { 'Content-Type': 'application/json', token: getToken() || '' },
+      body: JSON.stringify({
+        ...capabilityImportForm.value,
+        content: capabilityImportForm.value.kind === 'mcp' ? '' : content,
+        config,
+      }),
     });
     const payload = await response.json();
     if (!response.ok || payload.code !== '200') {
-      throw new Error(payload.detail || payload.msg || '素材上传失败');
+      throw new Error(payload.detail || payload.msg || '导入失败');
     }
-    await fetchAssets(true);
+    capabilityImportOpen.value = false;
+    capabilityMessage.value = '能力资产已导入';
+    await fetchCapabilities(true);
   } catch (error) {
-    assetError.value = error instanceof Error ? error.message : '素材上传失败';
+    capabilityImportError.value = error instanceof Error ? error.message : '导入失败';
   } finally {
-    uploadingAsset.value = false;
-    input.value = '';
+    capabilityImportSaving.value = false;
   }
 }
 
-function useAssetInTask(asset: AssetItem) {
+async function deleteCapability(capability: CapabilityItem) {
+  if (!window.confirm(`从能力库移除「${capability.name}」？`)) return;
+  try {
+    const response = await fetch(`/api/workbench/assets/${encodeURIComponent(capability.id)}`, {
+      method: 'DELETE',
+      headers: { token: getToken() || '' },
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.code !== '200') {
+      throw new Error(payload.detail || payload.msg || '移除失败');
+    }
+    if (capabilityDetail.value?.id === capability.id) capabilityDetail.value = null;
+    capabilityMessage.value = '已移除导入资产';
+    await fetchCapabilities(true);
+  } catch (error) {
+    capabilityError.value = error instanceof Error ? error.message : '移除失败';
+  }
+}
+
+function openCapabilityDetail(capability: CapabilityItem) {
+  capabilityDetail.value = capability;
+}
+
+function capabilityConfigText(capability: CapabilityItem) {
+  return JSON.stringify(capability.config || {}, null, 2);
+}
+
+async function copyCapability(capability: CapabilityItem) {
+  const text = capability.kind === 'mcp' ? capabilityConfigText(capability) : capability.content;
+  try {
+    await navigator.clipboard.writeText(text);
+    capabilityMessage.value = `已复制 ${capability.name}`;
+  } catch {
+    capabilityMessage.value = '复制失败，请打开详情手动复制';
+  }
+}
+
+function useCapabilityInTask(capability: CapabilityItem) {
   activeSection.value = 'overview';
-  draft.value = `请在工作区任务中参考以下素材：${asset.name}\n${window.location.origin}${asset.url}`;
+  capabilityDetail.value = null;
+  draft.value = `请参考能力资产「${capability.name}」（${capabilityKindLabel(capability.kind)} / ${capability.category}）。`;
   nextTick(() => {
     composerRef.value?.focus();
     resizeComposer();
   });
 }
 
-function assetKindLabel(kind: AssetItem['kind']) {
+function capabilityKindLabel(kind: CapabilityKind) {
   return {
-    image: '图片',
-    audio: '音频',
-    document: '文档',
-    file: '文件',
+    skill: 'Skill',
+    mcp: 'MCP',
+    prompt: 'Prompt',
   }[kind];
 }
 
-function assetSourceLabel(source: AssetItem['source']) {
+function capabilityKindMark(kind: CapabilityKind) {
   return {
-    profile: '个人资料',
-    music: '私人音乐',
-    agent_upload: '我的上传',
-    article: '博客封面',
+    skill: 'S',
+    mcp: 'M',
+    prompt: 'P',
+  }[kind];
+}
+
+function capabilitySourceLabel(source: CapabilityItem['source']) {
+  return {
+    builtin: '内置',
+    runtime: '运行中',
+    imported: '已导入',
   }[source];
 }
 
-function formatAssetSize(size: number) {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function formatAssetDate(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? ''
-    : new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric' }).format(date);
+function capabilityStatusLabel(status: string) {
+  return {
+    active: '可用',
+    always: '常驻',
+    connected: '已连接',
+    pending: '待启用',
+  }[status] || status;
 }
 
 function setDefaultAgentMode(mode: AgentMode) {
@@ -2980,6 +3218,7 @@ onUnmounted(() => {
 }
 
 .article-thumb {
+  position: relative;
   width: 92px;
   height: 72px;
   overflow: hidden;
@@ -2995,7 +3234,16 @@ onUnmounted(() => {
   font-weight: 750;
 }
 
+.article-cover-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
 .article-thumb img {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -3318,6 +3566,539 @@ onUnmounted(() => {
 .asset-card-actions a:hover {
   border-color: rgba(91, 123, 255, 0.22);
   color: var(--wb-blue-deep);
+}
+
+.capability-import-button {
+  height: 38px;
+  padding: 0 14px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--wb-ink);
+  color: white;
+  font: inherit;
+  font-size: calc(var(--wb-font-scale) * 10px);
+  font-weight: 650;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(23, 27, 46, 0.14);
+}
+
+.capability-import-button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+}
+
+.capability-kind-filters {
+  margin-top: 22px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.capability-kind-filters button,
+.capability-category-bar > button {
+  height: 29px;
+  padding: 0 10px;
+  border: 1px solid var(--wb-line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.58);
+  color: #858c9e;
+  font: inherit;
+  font-size: calc(var(--wb-font-scale) * 9px);
+  cursor: pointer;
+}
+
+.capability-kind-filters button span,
+.capability-category-bar > button span {
+  margin-left: 4px;
+  color: #a8adba;
+}
+
+.capability-kind-filters button.active {
+  border-color: rgba(91, 123, 255, 0.26);
+  background: rgba(91, 123, 255, 0.09);
+  color: var(--wb-blue-deep);
+  font-weight: 650;
+}
+
+.capability-category-bar {
+  margin-top: 9px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.capability-category-bar > button {
+  height: 25px;
+  padding-inline: 8px;
+  border-color: transparent;
+  background: transparent;
+  font-size: calc(var(--wb-font-scale) * 8px);
+}
+
+.capability-category-bar > button.active {
+  background: rgba(23, 27, 46, 0.06);
+  color: #555c70;
+}
+
+.capability-search {
+  min-width: 200px;
+  height: 29px;
+  margin-left: auto;
+  padding: 0 9px;
+  border: 1px solid var(--wb-line);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.capability-search svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: #969caf;
+  stroke-width: 1.8;
+}
+
+.capability-search input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #555c70;
+  font: inherit;
+  font-size: calc(var(--wb-font-scale) * 8px);
+}
+
+.capability-grid {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: 10px;
+}
+
+.capability-card {
+  position: relative;
+  min-width: 0;
+  padding: 15px;
+  overflow: hidden;
+  border: 1px solid var(--wb-line);
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.78), rgba(248, 250, 255, 0.6));
+  transition: transform 170ms ease, border-color 170ms ease, box-shadow 170ms ease;
+}
+
+.capability-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: #5b7bff;
+}
+
+.capability-card.is-mcp::before { background: #22a06b; }
+.capability-card.is-prompt::before { background: #d89522; }
+
+.capability-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(91, 123, 255, 0.2);
+  box-shadow: 0 14px 30px rgba(48, 58, 94, 0.08);
+}
+
+.capability-card-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.capability-mark {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: rgba(91, 123, 255, 0.09);
+  color: var(--wb-blue-deep);
+  font-size: calc(var(--wb-font-scale) * 10px);
+  font-weight: 750;
+}
+
+.is-mcp .capability-mark {
+  background: rgba(34, 160, 107, 0.09);
+  color: #148453;
+}
+
+.is-prompt .capability-mark {
+  background: rgba(216, 149, 34, 0.1);
+  color: #a66d08;
+}
+
+.capability-title {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+}
+
+.capability-title strong {
+  overflow: hidden;
+  color: #42495e;
+  font-size: calc(var(--wb-font-scale) * 11px);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.capability-title small {
+  color: #9ca2b0;
+  font-size: calc(var(--wb-font-scale) * 7px);
+}
+
+.capability-status {
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.07);
+  color: #32865a;
+  font-size: calc(var(--wb-font-scale) * 7px);
+}
+
+.capability-status.status-pending {
+  background: rgba(245, 158, 11, 0.09);
+  color: #a66d08;
+}
+
+.capability-category {
+  margin-top: 12px;
+  color: var(--wb-blue-deep);
+  font-size: calc(var(--wb-font-scale) * 8px);
+  font-weight: 650;
+}
+
+.capability-description {
+  min-height: 34px;
+  margin: 6px 0 11px;
+  color: #777e91;
+  font-size: calc(var(--wb-font-scale) * 9px);
+  line-height: 1.6;
+}
+
+.capability-mapping {
+  padding: 8px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  background: rgba(238, 241, 248, 0.72);
+}
+
+.mapping-label {
+  margin-right: 2px;
+  color: #a0a5b3;
+  font-size: calc(var(--wb-font-scale) * 7px);
+}
+
+.mapping-tool,
+.mapping-more,
+.mapping-link {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #687086;
+  font-size: calc(var(--wb-font-scale) * 7px);
+}
+
+.mapping-link {
+  background: rgba(91, 123, 255, 0.07);
+  color: #6378cd;
+}
+
+.capability-triggers {
+  min-height: 19px;
+  margin-top: 8px;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.capability-triggers span {
+  color: #a0a5b3;
+  font-size: calc(var(--wb-font-scale) * 7px);
+}
+
+.capability-triggers span::before {
+  content: '#';
+  color: #c0c4ce;
+}
+
+.capability-card-actions {
+  margin-top: auto;
+  padding-top: 12px;
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.capability-card-actions button,
+.capability-detail-foot button {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--wb-line);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.6);
+  color: #70778a;
+  font: inherit;
+  font-size: calc(var(--wb-font-scale) * 8px);
+  cursor: pointer;
+}
+
+.capability-card-actions button:hover,
+.capability-detail-foot button:hover {
+  border-color: rgba(91, 123, 255, 0.24);
+  color: var(--wb-blue-deep);
+}
+
+.capability-card-actions button.danger:hover {
+  border-color: rgba(239, 68, 68, 0.24);
+  color: #c63e3e;
+}
+
+.capability-message {
+  margin-top: 12px;
+  color: #368661;
+  font-size: calc(var(--wb-font-scale) * 8px);
+}
+
+.capability-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(18, 22, 38, 0.42);
+  backdrop-filter: blur(8px);
+}
+
+.capability-detail-panel,
+.capability-import-panel {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  padding: 22px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 18px;
+  background: rgba(250, 251, 255, 0.98);
+  box-shadow: 0 30px 100px rgba(23, 29, 52, 0.3);
+}
+
+.capability-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.capability-detail-head h2 {
+  margin: 4px 0;
+  color: var(--wb-ink);
+  font-size: calc(var(--wb-font-scale) * 22px);
+}
+
+.capability-detail-head p {
+  margin: 0;
+  color: #969cad;
+  font-size: calc(var(--wb-font-scale) * 9px);
+}
+
+.capability-modal-close {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border: 1px solid var(--wb-line);
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: #7d8497;
+  cursor: pointer;
+}
+
+.capability-modal-close svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+}
+
+.capability-detail-meta {
+  margin: 16px 0;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.capability-detail-meta span {
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: rgba(91, 123, 255, 0.06);
+  color: #687393;
+  font-size: calc(var(--wb-font-scale) * 8px);
+}
+
+.capability-detail-panel pre {
+  max-height: 55vh;
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  border-radius: 11px;
+  background: #1d2230;
+  color: #e2e7f2;
+  font-size: calc(var(--wb-font-scale) * 9px);
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.capability-document {
+  max-height: 55vh;
+  padding: 16px;
+  overflow: auto;
+  border: 1px solid var(--wb-line);
+  border-radius: 11px;
+  color: #555c70;
+  font-size: calc(var(--wb-font-scale) * 10px);
+  line-height: 1.7;
+}
+
+.capability-detail-foot {
+  margin-top: 15px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.capability-detail-foot button:last-child {
+  border-color: transparent;
+  background: var(--wb-ink);
+  color: white;
+}
+
+.capability-import-kind {
+  margin: 18px 0 12px;
+  padding: 3px;
+  border-radius: 9px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+  background: rgba(228, 232, 241, 0.8);
+}
+
+.capability-import-kind button {
+  height: 29px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #8f95a7;
+  font: inherit;
+  font-size: calc(var(--wb-font-scale) * 8px);
+  cursor: pointer;
+}
+
+.capability-import-kind button.active {
+  background: white;
+  color: var(--wb-blue-deep);
+  box-shadow: 0 2px 7px rgba(52, 62, 96, 0.08);
+  font-weight: 650;
+}
+
+.capability-import-panel label {
+  margin-top: 10px;
+  display: grid;
+  gap: 5px;
+  color: #7d8497;
+  font-size: calc(var(--wb-font-scale) * 8px);
+}
+
+.capability-import-panel input,
+.capability-import-panel textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--wb-line);
+  border-radius: 8px;
+  outline: none;
+  background: white;
+  color: #555c70;
+  font: inherit;
+  font-size: calc(var(--wb-font-scale) * 9px);
+}
+
+.capability-import-panel textarea {
+  min-height: 220px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  line-height: 1.6;
+}
+
+.capability-import-panel input:focus,
+.capability-import-panel textarea:focus {
+  border-color: rgba(91, 123, 255, 0.34);
+}
+
+.capability-import-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.capability-file-import {
+  width: fit-content;
+  padding: 6px 9px;
+  border: 1px dashed rgba(91, 123, 255, 0.24);
+  border-radius: 7px;
+  color: var(--wb-blue-deep) !important;
+  cursor: pointer;
+}
+
+.capability-file-import input {
+  display: none;
+}
+
+.capability-import-note {
+  margin: 9px 0 0;
+  color: #969cad;
+  font-size: calc(var(--wb-font-scale) * 8px);
+  line-height: 1.6;
+}
+
+.capability-import-error {
+  margin-top: 10px;
+  color: #c63e3e;
+  font-size: calc(var(--wb-font-scale) * 8px);
+}
+
+.modal-fade-enter-active,
+.modal-fade-leave-active {
+  transition: opacity 180ms ease;
+}
+
+.modal-fade-enter-from,
+.modal-fade-leave-to {
+  opacity: 0;
 }
 
 .settings-grid {
@@ -4306,6 +5087,19 @@ onUnmounted(() => {
     padding-bottom: 0;
   }
 
+  .capability-search {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .capability-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .capability-import-grid {
+    grid-template-columns: 1fr;
+  }
+
   .settings-grid {
     grid-template-columns: 1fr;
   }
@@ -4338,6 +5132,17 @@ onUnmounted(() => {
   .article-row-actions {
     flex-direction: row;
     justify-content: flex-end;
+  }
+
+  .capability-modal {
+    padding: 10px;
+  }
+
+  .capability-detail-panel,
+  .capability-import-panel {
+    width: calc(100vw - 20px);
+    max-height: calc(100vh - 20px);
+    padding: 16px;
   }
 
   .section-title-row > span,
@@ -4532,6 +5337,33 @@ onUnmounted(() => {
 :global(.dark-mode .context-tabs button.active) {
   background: rgba(255, 255, 255, 0.09);
   color: #e7eaf3;
+}
+
+:global(.dark-mode .capability-card),
+:global(.dark-mode .capability-search),
+:global(.dark-mode .capability-kind-filters button),
+:global(.dark-mode .capability-detail-panel),
+:global(.dark-mode .capability-import-panel) {
+  background: rgba(30, 34, 48, 0.96);
+}
+
+:global(.dark-mode .capability-title strong),
+:global(.dark-mode .capability-detail-head h2),
+:global(.dark-mode .capability-document) {
+  color: #e7eaf3;
+}
+
+:global(.dark-mode .capability-mapping),
+:global(.dark-mode .capability-import-kind) {
+  background: rgba(255, 255, 255, 0.055);
+}
+
+:global(.dark-mode .mapping-tool),
+:global(.dark-mode .capability-import-panel input),
+:global(.dark-mode .capability-import-panel textarea) {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(18, 21, 32, 0.9);
+  color: #dfe3ef;
 }
 
 @media (prefers-reduced-motion: reduce) {

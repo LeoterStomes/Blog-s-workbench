@@ -48,7 +48,30 @@ def _parse_skill(text: str, stem: str) -> dict:
     dm = re.search(r"^##\s*description\s*\n(.*?)(?=^##\s|\Z)", text, re.M | re.S)
     if dm:
         description = dm.group(1).strip()
-    return {"name": name, "stem": stem, "body": text.strip(), "triggers": triggers, "description": description}
+    tools: list[str] = []
+    tool_match = re.search(r"^##\s*tools\s*\n(.*?)(?=^##\s|\Z)", text, re.M | re.S)
+    if tool_match:
+        tools = re.findall(r"`([^`]+)`", tool_match.group(1))
+    links: list[str] = []
+    link_match = re.search(r"^##\s*links\s*\n(.*?)(?=^##\s|\Z)", text, re.M | re.S)
+    if link_match:
+        links = [
+            line.lstrip("- ").strip()
+            for line in link_match.group(1).splitlines()
+            if line.strip().startswith("-")
+        ]
+    category_match = re.search(r"^##\s*category\s*\n(.*?)(?=^##\s|\Z)", text, re.M | re.S)
+    category = category_match.group(1).strip() if category_match else ""
+    return {
+        "name": name,
+        "stem": stem,
+        "body": text.strip(),
+        "triggers": triggers,
+        "description": description,
+        "tools": tools,
+        "links": links,
+        "category": category,
+    }
 
 
 def load_all():
@@ -66,6 +89,10 @@ def load_all():
                     "body": body,
                     "triggers": meta.get("triggers", []),
                     "always": meta.get("always", False),
+                    "description": meta.get("description", ""),
+                    "tools": meta.get("tools", []),
+                    "links": meta.get("links", []),
+                    "version": meta.get("version", 1),
                 }
                 _prompt_registry.append(entry)
                 if entry["always"]:
@@ -109,6 +136,16 @@ def get_skill_body(name: str) -> str | None:
     if len(hits) == 1:
         return hits[0]["body"]
     return None
+
+
+def get_prompt_catalog() -> list[dict]:
+    """Return prompt metadata and source content for the workbench asset catalog."""
+    return [dict(entry) for entry in _prompt_registry]
+
+
+def get_skill_catalog() -> list[dict]:
+    """Return parsed skill metadata and source content for the asset catalog."""
+    return [dict(entry) for entry in _skill_registry]
 
 
 def build_system_prompt(match_text: str, inherited: dict | None = None) -> tuple[str, dict]:

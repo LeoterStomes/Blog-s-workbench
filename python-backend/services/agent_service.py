@@ -16,8 +16,8 @@ TOOLS_SCHEMA = [
     {"type":"function","function":{"name":"search_web","description":"Web search via DuckDuckGo→Bing→SearXNG multi-engine fallback. No JS required, returns text results.","parameters":{"type":"object","properties":{"query":{"type":"string","description":"Search keyword in natural language, e.g. 'github trending projects this week'"}},"required":["query"]}}},
     {"type":"function","function":{"name":"read_url","description":"Read any webpage URL and return text content","parameters":{"type":"object","properties":{"url":{"type":"string","description":"Full URL to read"}},"required":["url"]}}},
     {"type":"function","function":{"name":"get_recent_articles","description":"Get the most recent published articles","parameters":{"type":"object","properties":{"limit":{"type":"integer","description":"Max results, default 5","default":5}}}}},
-    {"type":"function","function":{"name":"create_draft","description":"Create a draft blog article","parameters":{"type":"object","properties":{"title":{"type":"string","description":"Article title"},"content":{"type":"string","description":"Article content (HTML)"},"summary":{"type":"string","description":"Summary, optional"},"tags":{"type":"string","description":"Comma-separated tags"},"category_id":{"type":"integer","description":"Category ID, optional"}},"required":["title","content"]}}},
-    {"type":"function","function":{"name":"update_article","description":"Update an existing article/draft by ID. Change title/content/summary/tags/category. Use get_article first to read current content, then edit it.","parameters":{"type":"object","properties":{"article_id":{"type":"string","description":"Article ID (UUID)"},"title":{"type":"string","description":"New title (optional)"},"content":{"type":"string","description":"New HTML content (optional)"},"summary":{"type":"string","description":"New summary (optional)"},"tags":{"type":"string","description":"New comma-separated tags (optional)"},"category_id":{"type":"integer","description":"New category ID (optional)"}},"required":["article_id"]}}},
+    {"type":"function","function":{"name":"create_draft","description":"Create a draft blog article","parameters":{"type":"object","properties":{"title":{"type":"string","description":"Article title"},"content":{"type":"string","description":"Article content (HTML)"},"summary":{"type":"string","description":"Summary, optional"},"tags":{"type":"string","description":"Comma-separated tags"},"category_id":{"type":"integer","description":"Category ID, optional"},"cover_image":{"type":"string","description":"Cover image URL, optional"}},"required":["title","content"]}}},
+    {"type":"function","function":{"name":"update_article","description":"Update an existing article/draft by ID. Change title/content/summary/tags/category/cover. Use get_article first to read current content, then edit it.","parameters":{"type":"object","properties":{"article_id":{"type":"string","description":"Article ID (UUID)"},"title":{"type":"string","description":"New title (optional)"},"content":{"type":"string","description":"New HTML content (optional)"},"summary":{"type":"string","description":"New summary (optional)"},"tags":{"type":"string","description":"New comma-separated tags (optional)"},"category_id":{"type":"integer","description":"New category ID (optional)"},"cover_image":{"type":"string","description":"New cover image URL (optional)"}},"required":["article_id"]}}},
     {"type":"function","function":{"name":"list_drafts","description":"List draft articles (status=draft). Use to find the ID of a draft so you can edit or publish it.","parameters":{"type":"object","properties":{"limit":{"type":"integer","description":"Max results, default 10","default":10}}}}},
     {"type":"function","function":{"name":"set_status","description":"Publish (status=1) or unpublish/draft (status=0) an article by ID.","parameters":{"type":"object","properties":{"article_id":{"type":"string","description":"Article ID (UUID)"},"status":{"type":"integer","description":"1=publish, 0=unpublish"}},"required":["article_id","status"]}}},
     {"type":"function","function":{"name":"delete_article","description":"Delete an article/draft by ID.","parameters":{"type":"object","properties":{"article_id":{"type":"string","description":"Article ID (UUID)"}},"required":["article_id"]}}},
@@ -89,7 +89,7 @@ def agent_mode_instruction(mode: str) -> str:
     )
 
 async def execute_tool(name: str, args: dict, db: Session, user_id: int | None = None) -> str:
-    if name == "use_skill": return _use_skill(args.get("skill_name",""))
+    if name == "use_skill": return _use_skill(args.get("skill_name",""), db, user_id)
     elif name == "search_articles": return _search_articles(db, args.get("query",""), args.get("limit",5))
     elif name == "get_article": return _get_article(db, args.get("article_id",""), args.get("offset",0), args.get("max_chars",12000))
     elif name == "list_articles": return _list_articles(db, args, user_id)
@@ -115,12 +115,15 @@ async def execute_tool(name: str, args: dict, db: Session, user_id: int | None =
 
 # --- implementations ---
 
-def _use_skill(skill_name: str) -> str:
+def _use_skill(skill_name: str, db: Session | None = None, user_id: int | None = None) -> str:
     """加载指定技能的完整流程，返回给 agent 遵循"""
     if not skill_name or not skill_name.strip():
         return json.dumps({"error": "需要提供技能名称"}, ensure_ascii=False)
     from services.prompt_builder import get_skill_body, build_skill_index
     body = get_skill_body(skill_name)
+    if not body and db is not None and user_id is not None:
+        from services.asset_service import imported_skill_body
+        body = imported_skill_body(db, user_id, skill_name)
     if not body:
         return json.dumps({"error": f"未找到技能 '{skill_name}'", "available_skills": build_skill_index()}, ensure_ascii=False)
     return json.dumps({"skill": skill_name, "content": body}, ensure_ascii=False)
@@ -283,6 +286,7 @@ def _create_draft(db, args):
     try:
         a = KnowledgeArticle(id=str(uuid.uuid4()),title=title,summary=args.get("summary","") or "",
             content=content,tags=args.get("tags","") or "",category_id=args.get("category_id") or None,
+            cover_image=args.get("cover_image") or None,
             author_id=author_id,status=0,published_at=datetime.now(timezone.utc).replace(tzinfo=None))
         db.add(a); db.commit()
         return json.dumps({"id":a.id,"title":title,"url":f"/blog/{a.id}","status":"draft"}, ensure_ascii=False)

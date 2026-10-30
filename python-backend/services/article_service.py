@@ -113,6 +113,7 @@ def create_article(db: Session, data: dict, author_id: int):
     a = KnowledgeArticle(
         id=str(uuid.uuid4()), category_id=data.get("categoryId") or None,
         title=data["title"], summary=data.get("summary", ""), content=data.get("content", ""),
+        cover_image=data.get("coverImage") or None,
         tags=data.get("tags", ""), author_id=author_id, status=0,
         published_at=datetime.now(timezone.utc),
     )
@@ -127,6 +128,8 @@ def update_article(db: Session, article_id: str, data: dict):
     for field in ["title", "summary", "content", "tags", "cover_image"]:
         if field in data:
             setattr(a, field, data[field])
+    if "coverImage" in data:
+        a.cover_image = data["coverImage"] or None
     if "categoryId" in data:
         a.category_id = data["categoryId"] or None
     db.commit()

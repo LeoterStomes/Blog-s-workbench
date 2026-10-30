@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import User, UserAsset
+from models import User
 from auth import get_current_user_id
 
 router = APIRouter(prefix="/api/file", tags=["文件"])
@@ -59,7 +59,6 @@ os.makedirs(AGENT_UPLOAD_DIR, exist_ok=True)
 async def upload_agent_file(
     file: UploadFile = File(...),
     user_id: int = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
 ):
     """Agent 文件上传 — 支持 PDF/DOCX/图片/文本等"""
     content = await file.read()
@@ -82,20 +81,8 @@ async def upload_agent_file(
         kind = "document"
     else:
         kind = "file"
-    asset = UserAsset(
-        user_id=user_id,
-        name=safe_name,
-        url=url,
-        mime_type=mime_type,
-        size=len(content),
-        kind=kind,
-        source="agent_upload",
-    )
-    db.add(asset)
-    db.commit()
-    db.refresh(asset)
     return {
         "code": "200",
         "msg": "上传成功",
-        "data": {"id": asset.id, "url": url, "name": safe_name, "size": len(content), "kind": kind},
+        "data": {"url": url, "name": safe_name, "size": len(content), "kind": kind},
     }

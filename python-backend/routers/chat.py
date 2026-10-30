@@ -22,6 +22,7 @@ from services.agent_service import (
     normalize_agent_mode,
 )
 from services.mcp_client import load_mcp_servers, get_mcp_tools, call_mcp_tool
+from services.asset_service import imported_prompt_context, imported_skill_index
 
 # ── 加载 MCP Server ──
 _mcp_servers = load_mcp_servers()
@@ -330,6 +331,12 @@ async def stream_chat(
         _session_matches[sid_int] = matches
         if len(_session_matches) > 500:  # 防无界增长
             _session_matches.clear()
+    custom_prompt = imported_prompt_context(db, user_id, match_text)
+    custom_skills = imported_skill_index(db, user_id)
+    if custom_prompt:
+        sys_prompt += "\n\n" + custom_prompt
+    if custom_skills:
+        sys_prompt += "\n\n" + custom_skills
 
     messages = [
         {

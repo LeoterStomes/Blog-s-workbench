@@ -76,6 +76,7 @@ def create(body: ArticleBody, user_id: int = Depends(get_current_user_id), db: S
         "summary": body.summary,
         "content": body.content,
         "tags": body.tags,
+        "coverImage": body.coverImage,
     }, author_id=user_id)
     return {"code": "200", "msg": "创建成功", "data": {"id": article_id}}
 
@@ -89,6 +90,7 @@ def update(article_id: str, body: ArticleBody, db: Session = Depends(get_db)):
         "content": body.content,
         "tags": body.tags,
         "categoryId": body.categoryId,
+        "coverImage": body.coverImage,
     })
     if not ok:
         return {"code": "404", "msg": "文章不存在", "data": None}
