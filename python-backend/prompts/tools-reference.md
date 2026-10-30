@@ -11,6 +11,7 @@ version: 1
 - RAG 搜索（search_articles）覆盖博客+外部文档，一次搜索搞定
 - **完整文章清单**：用 `list_articles` 分页遍历，持续使用 `next_offset` 直到 `has_more=false`。管理员可用 `status=all` 同时查看已发布和草稿；不要因单页结果较少就声称博客只有这些文章。
 - **完整正文**：`get_article` 返回长文时使用 `next_offset` 继续读取，直到 `has_more=false`。不要把一个正文分块误判为完整文章。
+- **扩展能力**：执行模式下可用 `submit_capability_draft` 创建 Skill、Prompt 或 MCP 草稿，但草稿必须由用户到能力资产库中审核并打开开关后才会生效。MCP 草稿严禁自动启动或执行命令。
 - 无本地结果时 search_web 自动兜底
 - 搜索/读网页有上限，后端会强制限制，不要无限重试
 - 工具名永远不在回复中出现

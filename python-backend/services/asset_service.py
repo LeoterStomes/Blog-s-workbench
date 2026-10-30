@@ -3,7 +3,7 @@ from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
 
-from models import CapabilityAsset
+from models import CapabilityAsset, UserCapabilityState
 from services.mcp_client import get_mcp_catalog
 from services.prompt_builder import get_prompt_catalog, get_skill_catalog
 
@@ -54,6 +54,56 @@ def _as_list(value) -> list:
     if not value:
         return []
     return [str(value)]
+
+
+def capability_state_map(db: Session, user_id: int) -> dict[str, bool]:
+    return {
+        row.capability_id: bool(row.enabled)
+        for row in db.query(UserCapabilityState)
+        .filter(UserCapabilityState.user_id == user_id)
+        .all()
+    }
+
+
+def is_capability_enabled(db: Session, user_id: int, capability_id: str) -> bool:
+    row = (
+        db.query(UserCapabilityState)
+        .filter(
+            UserCapabilityState.user_id == user_id,
+            UserCapabilityState.capability_id == capability_id,
+        )
+        .first()
+    )
+    return True if row is None else bool(row.enabled)
+
+
+def set_capability_enabled(db: Session, user_id: int, capability_id: str, enabled: bool) -> None:
+    row = (
+        db.query(UserCapabilityState)
+        .filter(
+            UserCapabilityState.user_id == user_id,
+            UserCapabilityState.capability_id == capability_id,
+        )
+        .first()
+    )
+    if row is None:
+        row = UserCapabilityState(user_id=user_id, capability_id=capability_id)
+        db.add(row)
+    row.enabled = 1 if enabled else 0
+    db.commit()
+
+
+def filter_enabled_mcp_tools(tools: list[dict], disabled_ids: set[str]) -> list[dict]:
+    enabled = []
+    for tool in tools:
+        name = tool.get("function", {}).get("name", "")
+        if not name.startswith("mcp_"):
+            enabled.append(tool)
+            continue
+        server_name = name.split("__", 1)[0].replace("mcp_", "", 1)
+        if f"mcp:{server_name}" not in disabled_ids:
+            enabled.append(tool)
+    return enabled
 
 
 def _builtin_skills() -> list[dict]:
@@ -126,8 +176,9 @@ def _connected_mcp_assets() -> list[dict]:
     return assets
 
 
-def _imported_assets(db: Session, user_id: int) -> list[dict]:
+def _imported_assets(db: Session, user_id: int, connected_mcp_names: set[str] | None = None) -> list[dict]:
     assets = []
+    connected_mcp_names = connected_mcp_names or set()
     rows = (
         db.query(CapabilityAsset)
         .filter(CapabilityAsset.user_id == user_id, CapabilityAsset.status > 0)
@@ -155,7 +206,13 @@ def _imported_assets(db: Session, user_id: int) -> list[dict]:
             "category": row.category or "自定义",
             "description": row.description or "用户导入的能力资产",
             "source": "imported",
-            "status": "pending" if row.kind == "mcp" else "active",
+            "status": (
+                "review" if row.status == 2
+                else "connected" if row.kind == "mcp" and row.name in connected_mcp_names
+                else "pending" if row.kind == "mcp"
+                else "active"
+            ),
+            "enabled": row.status != 2 and row.kind != "mcp",
             "triggers": _as_list(public_config.get("triggers")),
             "tools": _as_list(public_config.get("tools")),
             "links": _as_list(public_config.get("links")),
@@ -175,7 +232,7 @@ def _imported_rows(db: Session, user_id: int, kind: str) -> list[CapabilityAsset
         .filter(
             CapabilityAsset.user_id == user_id,
             CapabilityAsset.kind == kind,
-            CapabilityAsset.status > 0,
+            CapabilityAsset.status == 1,
         )
         .order_by(CapabilityAsset.updated_at.desc())
         .all()
@@ -183,7 +240,10 @@ def _imported_rows(db: Session, user_id: int, kind: str) -> list[CapabilityAsset
 
 
 def imported_skill_index(db: Session, user_id: int) -> str:
-    rows = _imported_rows(db, user_id, "skill")
+    rows = [
+        row for row in _imported_rows(db, user_id, "skill")
+        if is_capability_enabled(db, user_id, f"capability:{row.id}")
+    ]
     if not rows:
         return ""
     lines = [
@@ -198,6 +258,8 @@ def imported_skill_index(db: Session, user_id: int) -> str:
 def imported_prompt_context(db: Session, user_id: int, match_text: str) -> str:
     bodies = []
     for row in _imported_rows(db, user_id, "prompt"):
+        if not is_capability_enabled(db, user_id, f"capability:{row.id}"):
+            continue
         try:
             config = json.loads(row.config_json or "{}")
         except json.JSONDecodeError:
@@ -213,18 +275,25 @@ def imported_skill_body(db: Session, user_id: int, name: str) -> str | None:
     if not key:
         return None
     for row in _imported_rows(db, user_id, "skill"):
+        row_id = f"capability:{row.id}"
+        if not is_capability_enabled(db, user_id, row_id):
+            continue
         if row.name.lower() == key:
             return row.content
     return None
 
 
 def list_assets(db: Session, user_id: int) -> dict:
+    connected_mcp = _connected_mcp_assets()
     assets = (
         _builtin_skills()
         + _builtin_prompts()
-        + _connected_mcp_assets()
-        + _imported_assets(db, user_id)
+        + connected_mcp
+        + _imported_assets(db, user_id, {server["name"] for server in connected_mcp})
     )
+    states = capability_state_map(db, user_id)
+    for asset in assets:
+        asset["enabled"] = states.get(asset["id"], asset.get("enabled", True))
     kind_counts = {"skill": 0, "mcp": 0, "prompt": 0}
     category_counts = {category: 0 for category in CATEGORY_ORDER[1:]}
     for asset in assets:

@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from auth import get_current_user_id
 from database import get_db
 from models import CapabilityAsset, User
-from services.asset_service import list_assets
+from services.asset_service import list_assets, set_capability_enabled
+from services.mcp_client import activate_mcp_server
 from services.prompt_builder import _parse_frontmatter, _parse_skill
 
 
@@ -22,6 +23,10 @@ class CapabilityImportBody(BaseModel):
     description: str = Field(default="", max_length=600)
     content: str = ""
     config: dict = Field(default_factory=dict)
+
+
+class CapabilityToggleBody(BaseModel):
+    enabled: bool
 
 
 def _require_admin(db: Session, user_id: int):
@@ -102,6 +107,43 @@ def import_asset(
     db.commit()
     db.refresh(row)
     return {"code": "200", "msg": "能力资产已导入", "data": {"id": f"capability:{row.id}"}}
+
+
+@router.put("/assets/{asset_id}/enabled")
+def toggle_asset(
+    asset_id: str,
+    body: CapabilityToggleBody,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    if asset_id.startswith("capability:"):
+        try:
+            row_id = int(asset_id.split(":", 1)[1])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="能力资产 ID 无效")
+        row = (
+            db.query(CapabilityAsset)
+            .filter(CapabilityAsset.id == row_id, CapabilityAsset.user_id == user_id)
+            .first()
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="能力资产不存在")
+        if body.enabled:
+            if row.kind == "mcp":
+                try:
+                    config = json.loads(row.config_json or "{}")
+                except json.JSONDecodeError:
+                    config = {}
+                activated, reason = activate_mcp_server(row.name, config)
+                if not activated:
+                    raise HTTPException(status_code=502, detail=f"MCP 启用失败：{reason}")
+            row.status = 1
+            db.commit()
+    elif not asset_id.startswith(("skill:", "prompt:", "mcp:")):
+        raise HTTPException(status_code=400, detail="能力资产 ID 无效")
+
+    set_capability_enabled(db, user_id, asset_id, body.enabled)
+    return {"code": "200", "msg": "开关已更新", "data": {"id": asset_id, "enabled": body.enabled}}
 
 
 @router.delete("/assets/{asset_id}")

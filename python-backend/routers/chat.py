@@ -22,7 +22,12 @@ from services.agent_service import (
     normalize_agent_mode,
 )
 from services.mcp_client import load_mcp_servers, get_mcp_tools, call_mcp_tool
-from services.asset_service import imported_prompt_context, imported_skill_index
+from services.asset_service import (
+    capability_state_map,
+    filter_enabled_mcp_tools,
+    imported_prompt_context,
+    imported_skill_index,
+)
 
 # ── 加载 MCP Server ──
 _mcp_servers = load_mcp_servers()
@@ -79,7 +84,14 @@ async def _compress_and_store(session_id: int, user_id: int):
 
 
 # ── 权限控制 ──
-WRITE_TOOLS = {"create_draft", "export_file", "update_article", "set_status", "delete_article"}  # 仅 admin(user_type=2) 可用的工具
+WRITE_TOOLS = {
+    "create_draft",
+    "export_file",
+    "update_article",
+    "set_status",
+    "delete_article",
+    "submit_capability_draft",
+}  # 仅 admin(user_type=2) 可用的工具
 
 def _filter_tools_for_user(db: Session, user_id: int, agent_mode: str = "execute") -> list[dict]:
     """根据用户角色与 Harness 模式过滤工具；未知模式按只读处理。"""
@@ -90,7 +102,7 @@ def _filter_tools_for_user(db: Session, user_id: int, agent_mode: str = "execute
     if is_admin:
         tools = filter_tools_by_mode(TOOLS_SCHEMA, mode)
         if mode == "execute":
-            tools = tools + _MCP_TOOLS
+            tools = tools + get_mcp_tools()
         return tools
     reader_tools = [t for t in TOOLS_SCHEMA if t["function"]["name"] not in WRITE_TOOLS]
     return filter_tools_by_mode(reader_tools, mode)
@@ -326,7 +338,15 @@ async def stream_chat(
     # 触发匹配文本：当前消息 + 最近 2 条用户消息（跟进问题也能命中上下文）
     recent_user_texts = [m.content or "" for m in all_history if m.sender_type == 1][-3:]
     match_text = " ".join(recent_user_texts).lower()
-    sys_prompt, matches = _build_prompt(match_text, _session_matches.get(sid_int))
+    capability_states = capability_state_map(db, user_id)
+    disabled_capabilities = {
+        capability_id for capability_id, enabled in capability_states.items() if not enabled
+    }
+    sys_prompt, matches = _build_prompt(
+        match_text,
+        _session_matches.get(sid_int),
+        disabled_capabilities,
+    )
     if matches["prompts"] or matches["skills"]:
         _session_matches[sid_int] = matches
         if len(_session_matches) > 500:  # 防无界增长
@@ -379,6 +399,7 @@ async def stream_chat(
         messages.insert(1, {"role": "system", "content": tool_ctx})
 
     available_tools = _filter_tools_for_user(db, user_id, agent_mode)
+    available_tools = filter_enabled_mcp_tools(available_tools, disabled_capabilities)
     allowed_tool_names = {
         tool["function"]["name"]
         for tool in available_tools

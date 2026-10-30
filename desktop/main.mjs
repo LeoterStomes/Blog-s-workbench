@@ -264,6 +264,13 @@ async function captureQaScreenshot() {
     );
     await new Promise(resolveWait => setTimeout(resolveWait, 300));
   }
+  if (process.env.WORKBENCH_QA_TOGGLE_FIRST_CAPABILITY === '1') {
+    await mainWindow.webContents.executeJavaScript(
+      "document.querySelector('.capability-switch input')?.click()",
+      true,
+    );
+    await new Promise(resolveWait => setTimeout(resolveWait, 800));
+  }
   const qaFontStep = Number(process.env.WORKBENCH_QA_FONT_STEP || 0);
   const qaFontLabel = qaFontStep >= 0 ? '放大字体' : '缩小字体';
   for (let step = 0; step < Math.abs(qaFontStep); step += 1) {
@@ -372,6 +379,8 @@ async function captureQaScreenshot() {
     capabilityCards: document.querySelectorAll('.capability-card').length,
     capabilityDetailOpen: !!document.querySelector('.capability-detail-panel'),
     capabilityImportOpen: !!document.querySelector('.capability-import-panel'),
+    capabilityEnabled: [...document.querySelectorAll('.capability-switch input')].slice(0, 4).map(input => input.checked),
+    capabilityDisabledCards: document.querySelectorAll('.capability-card.disabled').length,
     assetNotice: document.querySelector('.assets-view .workspace-notice')?.textContent?.trim() || '',
     settingsVisible: !!document.querySelector('.settings-view'),
     articleRows: document.querySelectorAll('.article-stream-item').length,

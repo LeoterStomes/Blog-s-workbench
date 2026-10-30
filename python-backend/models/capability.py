@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 
 from database import Base
 from .user import now
@@ -17,4 +17,17 @@ class CapabilityAsset(Base):
     config_json = Column(Text, default="")
     status = Column(Integer, default=1, index=True)
     created_at = Column(DateTime, default=now)
+    updated_at = Column(DateTime, default=now, onupdate=now)
+
+
+class UserCapabilityState(Base):
+    __tablename__ = "user_capability_state"
+    __table_args__ = (
+        UniqueConstraint("user_id", "capability_id", name="uq_user_capability_state"),
+    )
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("user.id"), nullable=False, index=True)
+    capability_id = Column(String(180), nullable=False, index=True)
+    enabled = Column(Integer, default=1, nullable=False)
     updated_at = Column(DateTime, default=now, onupdate=now)

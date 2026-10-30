@@ -323,6 +323,27 @@ def get_mcp_catalog() -> list[dict]:
     return catalog
 
 
+def activate_mcp_server(name: str, config: dict) -> tuple[bool, str]:
+    """Explicitly start an imported MCP server after admin approval."""
+    if name in _servers:
+        return True, "already connected"
+    if not isinstance(config, dict):
+        return False, "invalid config"
+    if config.get("url"):
+        server = MCPHttpServer(name, config["url"])
+    elif config.get("command"):
+        args = config.get("args", [])
+        if isinstance(args, str):
+            args = args.split()
+        server = MCPServer(name, config["command"], args, config.get("env"))
+    else:
+        return False, "url or command is required"
+    if not server.start():
+        return False, "connection failed"
+    _servers[name] = server
+    return True, "connected"
+
+
 async def call_mcp_tool(full_name: str, args: dict) -> Optional[str]:
     """调用 MCP 工具（线程池执行，不阻塞事件循环）"""
     parts = full_name.split("__", 1)

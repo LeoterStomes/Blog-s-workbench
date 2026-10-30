@@ -108,16 +108,21 @@ def load_all():
                 pass
 
 
-def build_skill_index() -> str:
+def build_skill_index(disabled_ids: set[str] | None = None) -> str:
     """技能目录（紧凑）：常驻注入 system prompt，供 agent 判断后按需 use_skill 加载"""
-    if not _skill_registry:
+    disabled_ids = disabled_ids or set()
+    available = [
+        skill for skill in _skill_registry
+        if f"skill:{skill['stem']}" not in disabled_ids
+    ]
+    if not available:
         return ""
     lines = [
         "## 可用技能目录",
         "下面是你可用的技能。先判断当前任务是否需要某个技能：需要时调用 `use_skill` 工具加载它的完整流程与规则（一次加载一个），不需要则忽略。",
         "",
     ]
-    for sk in _skill_registry:
+    for sk in available:
         desc = sk["description"] or "、".join(sk["triggers"][:5])
         lines.append(f"- **{sk['name']}**（`{sk['stem']}`）—— {desc}")
     return "\n".join(lines)
@@ -148,19 +153,30 @@ def get_skill_catalog() -> list[dict]:
     return [dict(entry) for entry in _skill_registry]
 
 
-def build_system_prompt(match_text: str, inherited: dict | None = None) -> tuple[str, dict]:
+def build_system_prompt(
+    match_text: str,
+    inherited: dict | None = None,
+    disabled_ids: set[str] | None = None,
+) -> tuple[str, dict]:
     """组装 system prompt。
 
     match_text: 用于 prompt 触发匹配的文本（当前消息 + 最近用户消息），调用方需已转小写
     inherited: 上一轮匹配结果 {"prompts": set}；本轮无命中时继承
     返回 (prompt_text, {"prompts": set, "skills": set})；skills 恒为空（技能改为 use_skill 按需加载）
     """
-    matched_bodies = list(_always_prompts)
+    disabled_ids = disabled_ids or set()
+    matched_bodies = [
+        entry["body"]
+        for entry in _prompt_registry
+        if entry["always"] and f"prompt:{entry['name']}" not in disabled_ids
+    ]
     matched_prompts: set[str] = set()
 
     # prompts：命中即注入（体量小，不设上限）
     for entry in _prompt_registry:
         if entry["always"]:
+            continue
+        if f"prompt:{entry['name']}" in disabled_ids:
             continue
         for t in entry["triggers"]:
             if t and t.lower() in match_text:
@@ -172,12 +188,16 @@ def build_system_prompt(match_text: str, inherited: dict | None = None) -> tuple
     if not matched_prompts and inherited:
         prev_prompts = set(inherited.get("prompts", set()))
         for entry in _prompt_registry:
-            if entry["name"] in prev_prompts and not entry["always"]:
+            if (
+                entry["name"] in prev_prompts
+                and not entry["always"]
+                and f"prompt:{entry['name']}" not in disabled_ids
+            ):
                 matched_bodies.append(entry["body"])
                 matched_prompts.add(entry["name"])
 
     # 技能目录常驻注入（技能正文由 agent 按需 use_skill 加载）
-    matched_bodies.append(build_skill_index())
+    matched_bodies.append(build_skill_index(disabled_ids))
 
     return "\n\n".join(matched_bodies), {"prompts": matched_prompts, "skills": set()}
 

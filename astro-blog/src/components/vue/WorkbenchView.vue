@@ -377,7 +377,7 @@
                   v-for="capability in filteredCapabilities"
                   :key="capability.id"
                   class="capability-card"
-                  :class="`is-${capability.kind}`"
+                  :class="[`is-${capability.kind}`, { disabled: !capability.enabled }]"
                 >
                   <header class="capability-card-head">
                     <span class="capability-mark">{{ capabilityKindMark(capability.kind) }}</span>
@@ -386,6 +386,16 @@
                       <small>{{ capabilityKindLabel(capability.kind) }} · {{ capabilitySourceLabel(capability.source) }}</small>
                     </span>
                     <span class="capability-status" :class="`status-${capability.status}`">{{ capabilityStatusLabel(capability.status) }}</span>
+                    <label class="capability-switch" :class="{ enabled: capability.enabled, busy: capabilityToggling.includes(capability.id) }">
+                      <input
+                        type="checkbox"
+                        :checked="capability.enabled"
+                        :disabled="capabilityToggling.includes(capability.id)"
+                        :aria-label="`${capability.enabled ? '关闭' : '启用'} ${capability.name}`"
+                        @change="toggleCapability(capability, $event)"
+                      />
+                      <span />
+                    </label>
                   </header>
                   <div class="capability-category">{{ capability.category }}</div>
                   <p class="capability-description">{{ capability.description }}</p>
@@ -405,7 +415,7 @@
                   <footer class="capability-card-actions">
                     <button type="button" @click="openCapabilityDetail(capability)">查看内容</button>
                     <button type="button" @click="copyCapability(capability)">复制</button>
-                    <button type="button" @click="useCapabilityInTask(capability)">带入任务</button>
+                    <button type="button" :disabled="!capability.enabled" @click="useCapabilityInTask(capability)">带入任务</button>
                     <button
                       v-if="capability.source === 'imported'"
                       type="button"
@@ -444,7 +454,7 @@
                 <div v-else class="capability-document agent-markdown" v-html="renderMarkdown(capabilityDetail.content)" />
                 <footer class="capability-detail-foot">
                   <button type="button" @click="copyCapability(capabilityDetail)">复制原始内容</button>
-                  <button type="button" @click="useCapabilityInTask(capabilityDetail)">带入当前任务</button>
+                  <button type="button" :disabled="!capabilityDetail.enabled" @click="useCapabilityInTask(capabilityDetail)">带入当前任务</button>
                 </footer>
               </section>
             </div>
@@ -790,6 +800,7 @@ interface CapabilityItem {
   description: string;
   source: 'builtin' | 'runtime' | 'imported';
   status: string;
+  enabled: boolean;
   triggers: string[];
   tools: string[];
   links: string[];
@@ -865,6 +876,7 @@ const capabilityCategories = ref<{ name: string; count: number }[]>([{ name: '�
 const capabilityKind = ref<CapabilityFilter>('all');
 const capabilityCategory = ref('全部');
 const capabilitySearch = ref('');
+const capabilityToggling = ref<string[]>([]);
 const capabilityLoading = ref(false);
 const capabilityError = ref('');
 const capabilityMessage = ref('');
@@ -1502,6 +1514,33 @@ async function fetchCapabilities(force = false) {
   }
 }
 
+async function toggleCapability(capability: CapabilityItem, event: Event) {
+  const input = event.target as HTMLInputElement;
+  const enabled = input.checked;
+  capabilityToggling.value.push(capability.id);
+  capabilityMessage.value = '';
+  try {
+    const response = await fetch(`/api/workbench/assets/${encodeURIComponent(capability.id)}/enabled`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', token: getToken() || '' },
+      body: JSON.stringify({ enabled }),
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.code !== '200') {
+      throw new Error(payload.detail || payload.msg || '开关更新失败');
+    }
+    capability.enabled = enabled;
+    if (capability.status === 'review' && enabled) capability.status = 'active';
+    if (capability.kind === 'mcp' && enabled) capability.status = 'connected';
+    capabilityMessage.value = `${capability.name} 已${enabled ? '启用' : '关闭'}`;
+  } catch (error) {
+    input.checked = capability.enabled;
+    capabilityError.value = error instanceof Error ? error.message : '开关更新失败';
+  } finally {
+    capabilityToggling.value = capabilityToggling.value.filter(id => id !== capability.id);
+  }
+}
+
 function openCapabilityImport() {
   capabilityImportError.value = '';
   capabilityImportForm.value = {
@@ -1638,6 +1677,7 @@ function capabilityStatusLabel(status: string) {
     always: '常驻',
     connected: '已连接',
     pending: '待启用',
+    review: '待确认',
   }[status] || status;
 }
 
@@ -3718,6 +3758,10 @@ onUnmounted(() => {
   box-shadow: 0 14px 30px rgba(48, 58, 94, 0.08);
 }
 
+.capability-card.disabled {
+  opacity: 0.68;
+}
+
 .capability-card-head {
   display: flex;
   align-items: center;
@@ -3779,6 +3823,60 @@ onUnmounted(() => {
 .capability-status.status-pending {
   background: rgba(245, 158, 11, 0.09);
   color: #a66d08;
+}
+
+.capability-status.status-review {
+  background: rgba(245, 158, 11, 0.1);
+  color: #9d6908;
+}
+
+.capability-switch {
+  width: 28px;
+  height: 16px;
+  flex-shrink: 0;
+  position: relative;
+  display: block;
+  cursor: pointer;
+}
+
+.capability-switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.capability-switch > span {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: #d7dbe4;
+  transition: background 160ms ease;
+}
+
+.capability-switch > span::after {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  left: 2px;
+  top: 2px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 3px rgba(45, 53, 81, 0.18);
+  transition: transform 160ms ease;
+}
+
+.capability-switch.enabled > span {
+  background: var(--wb-blue);
+}
+
+.capability-switch.enabled > span::after {
+  transform: translateX(12px);
+}
+
+.capability-switch.busy {
+  opacity: 0.55;
+  cursor: progress;
 }
 
 .capability-category {
@@ -3870,6 +3968,12 @@ onUnmounted(() => {
 .capability-detail-foot button:hover {
   border-color: rgba(91, 123, 255, 0.24);
   color: var(--wb-blue-deep);
+}
+
+.capability-card-actions button:disabled,
+.capability-detail-foot button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .capability-card-actions button.danger:hover {

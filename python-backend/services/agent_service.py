@@ -11,6 +11,7 @@ TOOLS_SCHEMA = [
     {"type":"function","function":{"name":"search_articles","description":"Semantic search the entire knowledge base (blog articles + imported reference docs like PDFs). Returns relevant chunks with similarity scores. Use this for any knowledge lookup - one search covers everything.","parameters":{"type":"object","properties":{"query":{"type":"string","description":"Search query in natural language"},"limit":{"type":"integer","description":"Max results, default 5","default":5}},"required":["query"]}}},
     {"type":"function","function":{"name":"get_article","description":"Read an article by ID. Long content is returned in chunks; continue with next_offset until has_more is false when full text is required.","parameters":{"type":"object","properties":{"article_id":{"type":"string","description":"Article ID (UUID)"},"offset":{"type":"integer","description":"Character offset for long content, default 0","default":0},"max_chars":{"type":"integer","description":"Maximum characters per chunk, default 12000, max 30000","default":12000}},"required":["article_id"]}}},
     {"type":"function","function":{"name":"list_articles","description":"List every blog article with stable pagination. Use this when the user asks for all articles or when search may miss items. Continue with next_offset until has_more is false. Admin users may include drafts; readers only receive published articles.","parameters":{"type":"object","properties":{"status":{"type":"string","description":"published, draft, or all; draft/all require admin","default":"published"},"offset":{"type":"integer","description":"Start offset, default 0","default":0},"limit":{"type":"integer","description":"Page size, default 50, max 100","default":50}},"required":[]}}},
+    {"type":"function","function":{"name":"submit_capability_draft","description":"Submit a Skill, Prompt, or MCP configuration as a draft for the admin to review in the capability library. Drafts are never enabled automatically; MCP drafts never execute commands.","parameters":{"type":"object","properties":{"kind":{"type":"string","enum":["skill","mcp","prompt"]},"name":{"type":"string","description":"Capability name"},"category":{"type":"string","description":"Category, optional"},"description":{"type":"string","description":"Short description"},"content":{"type":"string","description":"Full Skill or Prompt source; omit for MCP"},"config":{"type":"object","description":"Optional metadata; MCP server config with url or command"}},"required":["kind","name"]}}},
     {"type":"function","function":{"name":"get_categories","description":"List all blog categories with article counts","parameters":{"type":"object","properties":{}}}},
     {"type":"function","function":{"name":"recommend_articles","description":"Recommend related articles by category","parameters":{"type":"object","properties":{"article_id":{"type":"string","description":"Current article ID"},"limit":{"type":"integer","description":"Max results, default 3","default":3}},"required":["article_id"]}}},
     {"type":"function","function":{"name":"search_web","description":"Web search via DuckDuckGo→Bing→SearXNG multi-engine fallback. No JS required, returns text results.","parameters":{"type":"object","properties":{"query":{"type":"string","description":"Search keyword in natural language, e.g. 'github trending projects this week'"}},"required":["query"]}}},
@@ -93,6 +94,7 @@ async def execute_tool(name: str, args: dict, db: Session, user_id: int | None =
     elif name == "search_articles": return _search_articles(db, args.get("query",""), args.get("limit",5))
     elif name == "get_article": return _get_article(db, args.get("article_id",""), args.get("offset",0), args.get("max_chars",12000))
     elif name == "list_articles": return _list_articles(db, args, user_id)
+    elif name == "submit_capability_draft": return _submit_capability_draft(db, args, user_id)
     elif name == "get_categories": return _get_categories(db)
     elif name == "recommend_articles": return _recommend_articles(db, args.get("article_id",""), args.get("limit",3))
     elif name == "search_web": return await _search_web(args.get("query",""))
@@ -119,7 +121,23 @@ def _use_skill(skill_name: str, db: Session | None = None, user_id: int | None =
     """加载指定技能的完整流程，返回给 agent 遵循"""
     if not skill_name or not skill_name.strip():
         return json.dumps({"error": "需要提供技能名称"}, ensure_ascii=False)
-    from services.prompt_builder import get_skill_body, build_skill_index
+    from services.prompt_builder import get_skill_body, get_skill_catalog, build_skill_index
+    if db is not None and user_id is not None:
+        from services.asset_service import is_capability_enabled
+        key = skill_name.strip().lower()
+        skills = get_skill_catalog()
+        matched = next(
+            (skill for skill in skills if key in (skill["name"].lower(), skill["stem"].lower())),
+            None,
+        )
+        if matched is None:
+            hits = [
+                skill for skill in skills
+                if key in skill["name"].lower() or key in skill["stem"].lower()
+            ]
+            matched = hits[0] if len(hits) == 1 else None
+        if matched and not is_capability_enabled(db, user_id, f"skill:{matched['stem']}"):
+            return json.dumps({"error": f"技能 '{skill_name}' 已被当前用户关闭"}, ensure_ascii=False)
     body = get_skill_body(skill_name)
     if not body and db is not None and user_id is not None:
         from services.asset_service import imported_skill_body
@@ -250,6 +268,92 @@ def _list_articles(db, args, user_id=None):
         "has_more": next_offset < total,
         "status": requested_status,
         "articles": [_a2d(a) for a in rows],
+    }, ensure_ascii=False)
+
+
+def _submit_capability_draft(db, args, user_id=None):
+    if user_id is None:
+        return json.dumps({"error": "需要登录后才能提交能力草稿"}, ensure_ascii=False)
+    kind = str(args.get("kind") or "").strip().lower()
+    name = str(args.get("name") or "").strip()
+    if kind not in {"skill", "mcp", "prompt"} or not name:
+        return json.dumps({"error": "kind 必须为 skill/mcp/prompt，且 name 不能为空"}, ensure_ascii=False)
+
+    from models import CapabilityAsset, User
+    from services.prompt_builder import _parse_frontmatter, _parse_skill
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or user.user_type != 2:
+        return json.dumps({"error": "仅管理员可以提交能力草稿"}, ensure_ascii=False)
+
+    existing = (
+        db.query(CapabilityAsset)
+        .filter(
+            CapabilityAsset.user_id == user_id,
+            CapabilityAsset.kind == kind,
+            CapabilityAsset.name == name,
+        )
+        .first()
+    )
+    if existing:
+        return json.dumps({
+            "error": "同名能力资产已存在，请使用其他名称或让用户手动更新",
+            "id": f"capability:{existing.id}",
+        }, ensure_ascii=False)
+
+    content = str(args.get("content") or "").strip()
+    config = args.get("config") if isinstance(args.get("config"), dict) else {}
+    description = str(args.get("description") or "").strip()
+    category = str(args.get("category") or "自定义").strip() or "自定义"
+
+    if kind in {"skill", "prompt"} and not content:
+        return json.dumps({"error": f"{kind} 草稿必须提供 content"}, ensure_ascii=False)
+    if kind == "prompt":
+        meta, _ = _parse_frontmatter(content)
+        config.update({
+            "triggers": meta.get("triggers", []),
+            "tools": meta.get("tools", []),
+            "links": meta.get("links", []),
+            "always": bool(meta.get("always")),
+        })
+        description = description or str(meta.get("description", "")).strip()
+        category = str(meta.get("category", "")).strip() or category
+    elif kind == "skill":
+        parsed = _parse_skill(content, name)
+        config.update({
+            "triggers": parsed.get("triggers", []),
+            "tools": parsed.get("tools", []),
+            "links": parsed.get("links", []),
+        })
+        description = description or parsed.get("description", "")
+        category = parsed.get("category") or category
+    elif kind == "mcp":
+        target = config.get("mcpServers", {}).get(name, config) if isinstance(config, dict) else {}
+        if not target.get("url") and not target.get("command"):
+            return json.dumps({"error": "MCP 草稿必须包含 url 或 command"}, ensure_ascii=False)
+        config = target
+        category = "外部连接"
+
+    row = CapabilityAsset(
+        user_id=user_id,
+        kind=kind,
+        name=name,
+        category=category,
+        description=description or content[:180],
+        content=content,
+        config_json=json.dumps(config, ensure_ascii=False),
+        status=2,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return json.dumps({
+        "id": f"capability:{row.id}",
+        "name": row.name,
+        "kind": row.kind,
+        "status": "pending_review",
+        "enabled": False,
+        "note": "已保存为待确认草稿。请用户到能力资产库审核；不会自动启用或执行。",
     }, ensure_ascii=False)
 
 def _get_categories(db):

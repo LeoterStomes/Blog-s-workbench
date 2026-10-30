@@ -1,4 +1,5 @@
 import unittest
+import json
 from unittest.mock import patch
 
 from sqlalchemy import BigInteger, create_engine
@@ -7,8 +8,14 @@ from sqlalchemy.orm import sessionmaker
 
 from database import Base
 from models import CapabilityAsset, User
-from routers.workbench import CapabilityImportBody, import_asset
-from services.asset_service import imported_prompt_context, imported_skill_body, list_assets
+from routers.workbench import CapabilityImportBody, CapabilityToggleBody, import_asset, toggle_asset
+from services.agent_service import _submit_capability_draft
+from services.asset_service import (
+    filter_enabled_mcp_tools,
+    imported_prompt_context,
+    imported_skill_body,
+    list_assets,
+)
 
 
 @compiles(BigInteger, "sqlite")
@@ -67,6 +74,7 @@ class CapabilityLibraryTest(unittest.TestCase):
         self.assertEqual(items["mcp:search"]["category"], "外部连接")
         self.assertEqual(items["mcp:search"]["tools"], ["mcp_search__lookup"])
         self.assertFalse(any(item["kind"] in {"image", "audio"} for item in catalog["items"]))
+        self.assertTrue(items["skill:content-writer"]["enabled"])
 
     @patch("services.asset_service.get_skill_catalog", return_value=[])
     @patch("services.asset_service.get_prompt_catalog", return_value=[])
@@ -99,6 +107,13 @@ Review the article carefully.
         self.assertIn("get_article", imported["tools"])
         self.assertEqual(reader_catalog["items"], [])
         self.assertIn("Review the article", imported_prompt_context(self.db, 1, "please review this"))
+        toggle_asset(
+            "capability:" + imported["id"].split(":", 1)[1],
+            CapabilityToggleBody(enabled=False),
+            user_id=1,
+            db=self.db,
+        )
+        self.assertEqual(imported_prompt_context(self.db, 1, "please review this"), "")
 
     @patch("services.asset_service.get_skill_catalog", return_value=[])
     @patch("services.asset_service.get_prompt_catalog", return_value=[])
@@ -140,9 +155,66 @@ Read and fix the draft.
 
         catalog = list_assets(self.db, user_id=1)
         item = next(item for item in catalog["items"] if item["kind"] == "mcp")
+        imported_id = item["id"]
         self.assertEqual(item["status"], "pending")
         self.assertEqual(item["config"]["endpoint"], "example.com")
         self.assertNotIn("url", item["config"])
+
+        with patch("routers.workbench.activate_mcp_server", return_value=(True, "connected")) as activate:
+            toggle_asset(
+                item["id"],
+                CapabilityToggleBody(enabled=True),
+                user_id=1,
+                db=self.db,
+            )
+            activate.assert_called_once()
+
+        with patch("services.asset_service.get_mcp_catalog", return_value=[{
+            "name": "demo",
+            "transport": "http",
+            "tools": [],
+        }]):
+            enabled_catalog = list_assets(self.db, user_id=1)
+        imported_mcp = next(entry for entry in enabled_catalog["items"] if entry["id"] == imported_id)
+        self.assertTrue(imported_mcp["enabled"])
+        self.assertEqual(imported_mcp["status"], "connected")
+
+    def test_mcp_tool_filter_respects_disabled_server(self):
+        tools = [
+            {"type": "function", "function": {"name": "mcp_search__lookup"}},
+            {"type": "function", "function": {"name": "search_articles"}},
+        ]
+        filtered = filter_enabled_mcp_tools(tools, {"mcp:search"})
+
+        self.assertEqual([tool["function"]["name"] for tool in filtered], ["search_articles"])
+
+    @patch("services.asset_service.get_skill_catalog", return_value=[])
+    @patch("services.asset_service.get_prompt_catalog", return_value=[])
+    @patch("services.asset_service.get_mcp_catalog", return_value=[])
+    def test_agent_submits_capability_as_review_draft_until_user_enables_it(self, *_mocks):
+        content = """---
+description: Review drafts
+triggers: [review]
+---
+Review the draft carefully.
+"""
+        result = json.loads(_submit_capability_draft(self.db, {
+            "kind": "prompt",
+            "name": "agent-reviewer",
+            "content": content,
+        }, user_id=1))
+
+        self.assertEqual(result["status"], "pending_review")
+        self.assertFalse(result["enabled"])
+        self.assertEqual(imported_prompt_context(self.db, 1, "please review"), "")
+
+        toggle_asset(
+            result["id"],
+            CapabilityToggleBody(enabled=True),
+            user_id=1,
+            db=self.db,
+        )
+        self.assertIn("Review the draft", imported_prompt_context(self.db, 1, "please review"))
 
 
 if __name__ == "__main__":
