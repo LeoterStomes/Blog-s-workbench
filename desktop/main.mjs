@@ -213,6 +213,10 @@ async function captureQaScreenshot() {
   if (app.isPackaged || !target || !mainWindow) return;
   mainWindow.show();
   mainWindow.focus();
+  const qaWidth = Number(process.env.WORKBENCH_QA_WIDTH || 0);
+  const qaHeight = Number(process.env.WORKBENCH_QA_HEIGHT || 0);
+  if (qaWidth > 0 && qaHeight > 0) mainWindow.setContentSize(qaWidth, qaHeight);
+  if (process.env.WORKBENCH_QA_MAXIMIZE === '1') mainWindow.maximize();
   await new Promise(resolveWait => setTimeout(resolveWait, 2500));
   if (process.env.WORKBENCH_QA_OPEN_BLOG === '1') {
     await mainWindow.webContents.executeJavaScript(
@@ -253,6 +257,13 @@ async function captureQaScreenshot() {
       const s = getComputedStyle(el);
       return { x: r.x, y: r.y, width: r.width, height: r.height, display: s.display, opacity: s.opacity, visibility: s.visibility };
     })(),
+    layoutRect: (() => {
+      const el = document.querySelector('.workbench-layout');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { width: r.width, height: r.height };
+    })(),
+    quickColumns: getComputedStyle(document.querySelector('.quick-grid')).gridTemplateColumns,
     ancestors: (() => {
       let el = document.querySelector('.workbench');
       const out = [];

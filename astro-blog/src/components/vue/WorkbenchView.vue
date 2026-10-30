@@ -106,7 +106,10 @@
       </aside>
 
       <main class="workbench-main">
-        <div class="main-scroll" :class="{ 'task-active': taskEvents.length > 0 }">
+        <div
+          class="main-scroll"
+          :class="{ 'task-active': taskEvents.length > 0, 'idle-mode': taskEvents.length === 0 }"
+        >
           <template v-if="taskEvents.length === 0">
             <section class="intro-block">
               <div class="intro-kicker">
@@ -991,8 +994,8 @@ onUnmounted(() => {
 }
 
 .workbench-topbar {
-  height: 54px;
-  max-width: 1580px;
+  height: clamp(54px, 4.2vh, 72px);
+  width: 100%;
   margin: 0 auto 12px;
   display: flex;
   align-items: center;
@@ -1185,13 +1188,14 @@ onUnmounted(() => {
 
 .workbench-layout {
   width: 100%;
-  max-width: 1580px;
   height: calc(100vh - 138px);
-  min-height: 660px;
-  max-height: 940px;
+  min-height: 0;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: 224px minmax(480px, 1fr) 292px;
+  grid-template-columns:
+    clamp(224px, 15vw, 300px)
+    minmax(0, 1fr)
+    clamp(292px, 18vw, 370px);
   border: 1px solid rgba(102, 111, 145, 0.12);
   border-radius: 20px;
   overflow: hidden;
@@ -1526,7 +1530,10 @@ onUnmounted(() => {
 .main-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: clamp(34px, 5vw, 68px) clamp(28px, 5vw, 72px) 34px;
+  padding:
+    clamp(34px, 4.5vh, 88px)
+    clamp(28px, 4vw, 96px)
+    clamp(28px, 4vh, 56px);
 }
 
 .main-scroll.task-active {
@@ -1535,8 +1542,30 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
+.main-scroll.idle-mode {
+  display: flex;
+  flex-direction: column;
+}
+
+.main-scroll.idle-mode .intro-block,
+.main-scroll.idle-mode .quick-section {
+  flex-shrink: 0;
+}
+
+.main-scroll.idle-mode .current-task {
+  min-height: clamp(250px, 30vh, 420px);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.main-scroll.idle-mode .task-empty,
+.main-scroll.idle-mode .draft-preview {
+  flex: 1;
+}
+
 .intro-block {
-  max-width: 660px;
+  max-width: min(760px, 76%);
 }
 
 .intro-kicker {
@@ -1559,7 +1588,7 @@ onUnmounted(() => {
 .intro-block h1 {
   margin: 21px 0 15px;
   color: var(--wb-ink);
-  font-size: clamp(40px, 4.6vw, 64px);
+  font-size: clamp(40px, 4.4vw, 88px);
   font-weight: 650;
   line-height: 0.98;
   letter-spacing: -0.055em;
@@ -1616,8 +1645,8 @@ onUnmounted(() => {
 
 .quick-card {
   position: relative;
-  min-height: 118px;
-  padding: 16px;
+  min-height: clamp(118px, 12vh, 162px);
+  padding: clamp(16px, 1.4vw, 24px);
   border: 1px solid var(--wb-line);
   border-radius: 13px;
   background: rgba(255, 255, 255, 0.66);
@@ -1671,7 +1700,7 @@ onUnmounted(() => {
 
 .quick-card strong {
   color: #3f455a;
-  font-size: 11px;
+  font-size: clamp(11px, 0.72vw, 14px);
   font-weight: 650;
 }
 
@@ -1679,7 +1708,7 @@ onUnmounted(() => {
   max-width: 82%;
   margin-top: 5px;
   color: #969caf;
-  font-size: 9px;
+  font-size: clamp(9px, 0.58vw, 11px);
   line-height: 1.55;
   text-wrap: pretty;
 }
@@ -1706,7 +1735,7 @@ onUnmounted(() => {
 
 .current-task {
   margin-top: 24px;
-  padding: 18px;
+  padding: clamp(18px, 1.5vw, 26px);
   border: 1px solid var(--wb-line);
   border-radius: 14px;
   background: rgba(248, 249, 253, 0.68);
@@ -2131,7 +2160,7 @@ onUnmounted(() => {
 .composer {
   position: relative;
   flex-shrink: 0;
-  margin: 0 clamp(22px, 4vw, 54px) 20px;
+  margin: 0 clamp(22px, 4vw, 76px) clamp(18px, 2.2vh, 28px);
   padding: 11px 12px 8px;
   border: 1px solid rgba(91, 123, 255, 0.2);
   border-radius: 15px;
@@ -2890,6 +2919,118 @@ onUnmounted(() => {
 
   .workbench-context {
     width: calc(100vw - 20px);
+  }
+}
+
+@media (min-width: 1700px) {
+  .workbench {
+    padding-inline: clamp(28px, 2vw, 52px);
+  }
+
+  .workbench-layout {
+    grid-template-columns:
+      clamp(248px, 13vw, 340px)
+      minmax(0, 1fr)
+      clamp(320px, 15vw, 410px);
+  }
+
+  .workbench-nav {
+    padding: 26px 18px 18px;
+  }
+
+  .workbench-context {
+    padding: 26px 22px 20px;
+  }
+
+  .main-scroll {
+    padding-inline: clamp(48px, 4vw, 110px);
+  }
+
+  .intro-block {
+    max-width: min(980px, 72%);
+  }
+
+  .intro-block h1 {
+    font-size: clamp(64px, 4.6vw, 104px);
+  }
+
+  .intro-block p {
+    max-width: 680px;
+    font-size: clamp(12px, 0.72vw, 16px);
+  }
+
+  .section-title-row h2 {
+    font-size: clamp(13px, 0.75vw, 17px);
+  }
+
+  .quick-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .quick-card {
+    min-height: clamp(148px, 15vh, 210px);
+  }
+
+  .current-task {
+    margin-top: clamp(24px, 2.5vh, 38px);
+  }
+
+  .source-card,
+  .mode-card {
+    padding: 11px;
+  }
+
+  .nav-item {
+    height: clamp(40px, 3.2vh, 52px);
+    font-size: clamp(12px, 0.6vw, 15px);
+  }
+
+  .section-heading,
+  .context-section-head {
+    font-size: clamp(10px, 0.55vw, 13px);
+  }
+
+  .recent-copy strong,
+  .source-card strong,
+  .mode-card strong {
+    font-size: clamp(10px, 0.55vw, 13px);
+  }
+
+  .recent-copy small,
+  .source-card small,
+  .mode-card small {
+    font-size: clamp(9px, 0.48vw, 11px);
+  }
+
+  .task-empty-copy strong {
+    font-size: clamp(12px, 0.7vw, 16px);
+  }
+
+  .task-empty-copy p,
+  .composer textarea {
+    font-size: clamp(11px, 0.65vw, 15px);
+  }
+
+  .composer-meta {
+    font-size: clamp(9px, 0.5vw, 11px);
+  }
+}
+
+@media (min-width: 2400px) {
+  .workbench-layout {
+    grid-template-columns: 340px minmax(0, 1fr) 410px;
+  }
+
+  .main-scroll {
+    padding-inline: clamp(72px, 4.5vw, 150px);
+  }
+
+  .intro-block {
+    max-width: min(1180px, 70%);
+  }
+
+  .quick-card {
+    min-height: 210px;
   }
 }
 

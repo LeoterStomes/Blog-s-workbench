@@ -27,7 +27,7 @@ import WorkbenchView from '@components/vue/WorkbenchView.vue';
   }
 
   body.app-chromeless .workbench-layout {
-    height: calc(100vh - 108px);
+    height: calc(100vh - clamp(108px, 12vh, 126px));
   }
 
   @media (max-width: 860px) {
