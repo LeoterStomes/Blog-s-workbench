@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('desktop', Object.freeze({
   isElectron: true,
   platform: process.platform,
   getInfo: () => ipcRenderer.invoke('desktop:info'),
+  setZoomFactor: (factor) => ipcRenderer.invoke('desktop:set-zoom-factor', factor),
   getWorkspace: () => ipcRenderer.invoke('workspace:get'),
   chooseWorkspace: () => ipcRenderer.invoke('workspace:choose'),
   listWorkspace: (relativePath = '') => ipcRenderer.invoke('workspace:list', relativePath),

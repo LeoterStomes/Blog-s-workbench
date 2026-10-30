@@ -240,6 +240,22 @@ async function captureQaScreenshot() {
     })()`, true);
     await new Promise(resolveWait => setTimeout(resolveWait, 1800));
   }
+  const qaFontStep = Number(process.env.WORKBENCH_QA_FONT_STEP || 0);
+  const qaFontLabel = qaFontStep >= 0 ? '放大字体' : '缩小字体';
+  for (let step = 0; step < Math.abs(qaFontStep); step += 1) {
+    await mainWindow.webContents.executeJavaScript(
+      `document.querySelector('[aria-label="${qaFontLabel}"]')?.click()`,
+      true,
+    );
+    await new Promise(resolveWait => setTimeout(resolveWait, 250));
+  }
+  if (process.env.WORKBENCH_QA_OPEN_FIRST_ARTICLE === '1') {
+    await mainWindow.webContents.executeJavaScript(
+      "document.querySelector('.article-stream-open')?.click()",
+      true,
+    );
+    await new Promise(resolveWait => setTimeout(resolveWait, 2500));
+  }
   const qaArticleId = process.env.WORKBENCH_QA_ARTICLE_ID;
   if (qaArticleId) {
     const articleUrl = `${localServer.url}/blog/${encodeURIComponent(qaArticleId)}`;
@@ -314,9 +330,14 @@ async function captureQaScreenshot() {
     activeSection: document.querySelector('.nav-item.active')?.textContent?.trim() || '',
     assetCards: document.querySelectorAll('.asset-card').length,
     assetNotice: document.querySelector('.assets-view .workspace-notice')?.textContent?.trim() || '',
-    settingsVisible: !!document.querySelector('.settings-view')
+    settingsVisible: !!document.querySelector('.settings-view'),
+    articleRows: document.querySelectorAll('.article-stream-item').length,
+    articleTotalLabel: document.querySelector('.article-feed-summary')?.textContent?.trim() || '',
+    articleError: document.querySelector('.article-feed-view .workspace-notice.error')?.textContent?.trim() || '',
+    textZoomLabel: document.querySelector('.font-zoom span')?.textContent?.trim() || ''
   })`, true);
   console.log(`[qa] page=${JSON.stringify(pageState)}`);
+  console.log(`[qa] zoomFactor=${mainWindow.webContents.getZoomFactor()}`);
   const image = await mainWindow.webContents.capturePage();
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, image.toPNG());
@@ -331,6 +352,11 @@ function registerIpc() {
     node: process.versions.node,
     backendPort,
   }));
+  ipcMain.handle('desktop:set-zoom-factor', (event, requestedFactor) => {
+    const factor = Math.min(1.5, Math.max(0.75, Number(requestedFactor) || 1));
+    BrowserWindow.fromWebContents(event.sender)?.webContents.setZoomFactor(factor);
+    return factor;
+  });
   ipcMain.handle('workspace:get', () => workspaceRoot);
   ipcMain.handle('workspace:choose', () => chooseWorkspace());
   ipcMain.handle('workspace:list', (_event, relativePath = '') => listDirectory(String(relativePath)));

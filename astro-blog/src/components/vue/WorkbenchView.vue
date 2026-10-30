@@ -23,7 +23,28 @@
         <button v-if="isDesktop" class="workspace-button" type="button" @click="chooseLocalWorkspace">
           {{ workspaceRoot ? '切换工作区' : '选择工作区' }}
         </button>
-        <button class="blog-button" type="button" @click="blogOpen = true">
+        <div class="font-zoom" role="group" aria-label="界面字号">
+          <button
+            type="button"
+            aria-label="缩小字体"
+            title="缩小字体"
+            :disabled="textZoomIndex === 0"
+            @click="changeTextZoom(-1)"
+          >
+            A−
+          </button>
+          <span>{{ textZoomLabel }}</span>
+          <button
+            type="button"
+            aria-label="放大字体"
+            title="放大字体"
+            :disabled="textZoomIndex === textZoomLevels.length - 1"
+            @click="changeTextZoom(1)"
+          >
+            A+
+          </button>
+        </div>
+        <button class="blog-button" type="button" @click="openBlogHome">
           <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h6" /></svg>
           博客
         </button>
@@ -239,16 +260,65 @@
             </div>
           </section>
 
-          <section v-else-if="activeSection === 'articles'" class="workspace-view blog-launcher-view">
-            <div class="workspace-view-heading">
-              <span class="eyebrow">CONNECTED BLOG</span>
-              <h1>博客是工作台的内容来源。</h1>
-              <p>在独立窗口内浏览文章、分类和站点页面，关闭后仍回到当前工作台。</p>
+          <section v-else-if="activeSection === 'articles'" class="workspace-view article-feed-view">
+            <div class="workspace-view-toolbar article-feed-toolbar">
+              <div class="workspace-view-heading compact">
+                <span class="eyebrow">LIVE BLOG INDEX</span>
+                <h1>文章流</h1>
+                <p>直接从博客读取已发布文章。列表每 30 秒静默更新，阅读时仍使用同一个内嵌博客窗口。</p>
+              </div>
+              <div class="article-feed-sync">
+                <span class="live-indicator"><i />{{ articleSyncLabel }}</span>
+                <button
+                  type="button"
+                  title="立即刷新文章"
+                  aria-label="立即刷新文章"
+                  :disabled="articleLoading"
+                  @click="fetchBlogArticles(true)"
+                >
+                  <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 10-2.34 5.66M20 4v7h-7" /></svg>
+                </button>
+              </div>
             </div>
-            <button type="button" class="workspace-primary-action" @click="blogOpen = true">
-              打开内嵌博客
-              <svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
-            </button>
+
+            <div class="article-feed-summary">
+              <span><strong>{{ articleTotal }}</strong> 篇已发布文章</span>
+              <span>按发布时间从新到旧</span>
+            </div>
+
+            <div v-if="articleError" class="workspace-notice error">
+              <span>{{ articleError }}</span>
+              <button type="button" @click="fetchBlogArticles(true)">重试</button>
+            </div>
+            <div v-else-if="articleLoading && blogArticles.length === 0" class="workspace-notice">正在读取博客文章...</div>
+            <div v-else-if="blogArticles.length === 0" class="workspace-notice">博客里还没有已发布文章。</div>
+            <div v-else class="article-stream" :class="{ refreshing: articleLoading }">
+              <article v-for="(article, index) in blogArticles" :key="article.id" class="article-stream-item">
+                <button type="button" class="article-stream-open" @click="openBlogArticle(article)">
+                  <span class="article-order">{{ String(index + 1).padStart(2, '0') }}</span>
+                  <span class="article-thumb">
+                    <img v-if="article.coverImage" :src="article.coverImage" :alt="article.title" loading="lazy" />
+                    <span v-else>R</span>
+                  </span>
+                  <span class="article-copy">
+                    <span class="article-meta-line">
+                      <span>{{ article.categoryName || '未分类' }}</span>
+                      <time>{{ formatArticleDate(article.publishedAt) }}</time>
+                      <span>{{ article.readCount || 0 }} 阅读</span>
+                    </span>
+                    <strong>{{ article.title }}</strong>
+                    <span class="article-summary">{{ article.summary || '这篇文章还没有摘要。' }}</span>
+                    <span v-if="articleTags(article.tags).length" class="article-tags">
+                      <i v-for="tag in articleTags(article.tags)" :key="tag">{{ tag }}</i>
+                    </span>
+                  </span>
+                </button>
+                <div class="article-row-actions">
+                  <button type="button" @click="openBlogArticle(article)">内嵌阅读</button>
+                  <button type="button" @click="useArticleInTask(article)">带入任务</button>
+                </div>
+              </article>
+            </div>
           </section>
 
           <section v-else-if="activeSection === 'assets'" class="workspace-view assets-view">
@@ -585,6 +655,17 @@ interface AssetItem {
 
 type AssetFilter = 'all' | AssetItem['kind'];
 
+interface BlogArticle {
+  id: string;
+  title: string;
+  summary?: string;
+  coverImage?: string;
+  categoryName?: string;
+  tags?: string;
+  readCount?: number;
+  publishedAt?: string;
+}
+
 const sessions = ref<SessionItem[]>([]);
 const loadingSessions = ref(false);
 const loggedIn = ref(false);
@@ -608,6 +689,7 @@ const streamCtrl = ref<AbortController | null>(null);
 const desktopBridge = (window as any).desktop as {
   isElectron?: boolean;
   getInfo?: () => Promise<{ appVersion?: string }>;
+  setZoomFactor?: (factor: number) => Promise<number>;
   getWorkspace?: () => Promise<string>;
   chooseWorkspace?: () => Promise<string | null>;
   openWorkspace?: () => Promise<string>;
@@ -622,6 +704,13 @@ const assetFilter = ref<AssetFilter>('all');
 const assetLoading = ref(false);
 const assetError = ref('');
 const uploadingAsset = ref(false);
+const blogArticles = ref<BlogArticle[]>([]);
+const articleTotal = ref(0);
+const articleLoading = ref(false);
+const articleError = ref('');
+const articleUpdatedAt = ref<Date | null>(null);
+const textZoomLevels = [0.9, 1, 1.1, 1.2, 1.3];
+const textZoomIndex = ref(1);
 const settingsSaving = ref(false);
 const settingsMessage = ref('');
 const settingsForm = ref({
@@ -631,6 +720,7 @@ const settingsForm = ref({
   bio: '',
 });
 let eventSequence = 0;
+let articlePollTimer: number | null = null;
 
 const displayName = computed(() => user.value?.nickname || user.value?.username || '访客');
 const userInitial = computed(() => displayName.value.slice(0, 1).toUpperCase());
@@ -681,6 +771,16 @@ const agentModes = [
 const activeMode = computed(() => (
   agentModes.find(mode => mode.value === agentMode.value) || agentModes[1]
 ));
+const textZoomLabel = computed(() => `${Math.round(textZoomLevels[textZoomIndex.value] * 100)}%`);
+const articleSyncLabel = computed(() => {
+  if (articleLoading.value && !articleUpdatedAt.value) return '正在同步';
+  if (!articleUpdatedAt.value) return '等待同步';
+  const time = new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(articleUpdatedAt.value);
+  return `已同步 ${time}`;
+});
 const filteredAssets = computed(() => {
   if (assetFilter.value === 'all') return assets.value;
   return assets.value.filter(asset => asset.kind === assetFilter.value);
@@ -764,11 +864,85 @@ const quickActions = [
   },
 ];
 
+async function applyTextZoom(index: number, persist = true) {
+  const nextIndex = Math.min(textZoomLevels.length - 1, Math.max(0, index));
+  textZoomIndex.value = nextIndex;
+  const factor = textZoomLevels[nextIndex];
+  if (persist) localStorage.setItem('workbench:textZoomIndex', String(nextIndex));
+  if (desktopBridge?.setZoomFactor) {
+    try {
+      await desktopBridge.setZoomFactor(factor);
+    } catch {
+      document.documentElement.style.setProperty('--wb-browser-zoom', String(factor));
+    }
+  } else {
+    document.documentElement.style.setProperty('--wb-browser-zoom', String(factor));
+  }
+}
+
+function changeTextZoom(direction: number) {
+  void applyTextZoom(textZoomIndex.value + direction);
+}
+
+function openBlogHome() {
+  blogUrl.value = `${window.location.origin}/`;
+  blogOpen.value = true;
+}
+
+function openBlogArticle(article: BlogArticle) {
+  blogUrl.value = `${window.location.origin}/blog/${encodeURIComponent(article.id)}`;
+  blogOpen.value = true;
+}
+
+function useArticleInTask(article: BlogArticle) {
+  activeSection.value = 'overview';
+  draft.value = `请阅读并参考博客文章《${article.title}》\n${window.location.origin}/blog/${encodeURIComponent(article.id)}`;
+  nextTick(() => {
+    composerRef.value?.focus();
+    resizeComposer();
+  });
+}
+
+function articleTags(tags = '') {
+  return tags.split(',').map(tag => tag.trim()).filter(Boolean).slice(0, 5);
+}
+
+function formatArticleDate(value?: string) {
+  if (!value) return '未记录日期';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? '未记录日期'
+    : new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'short', day: 'numeric' }).format(date);
+}
+
+async function fetchBlogArticles(force = false) {
+  if (articleLoading.value) return;
+  articleLoading.value = true;
+  articleError.value = '';
+  try {
+    const response = await fetch(
+      '/api/knowledge/article/page?status=1&currentPage=1&size=100&sortField=publishedAt&sortDirection=DESC',
+      { cache: 'no-store' },
+    );
+    const payload = await response.json();
+    if (!response.ok || payload.code !== '200') {
+      throw new Error(payload.detail || payload.msg || '文章列表读取失败');
+    }
+    blogArticles.value = payload.data?.records || [];
+    articleTotal.value = payload.data?.total || blogArticles.value.length;
+    articleUpdatedAt.value = new Date();
+  } catch (error) {
+    articleError.value = error instanceof Error ? error.message : '文章列表读取失败';
+  } finally {
+    articleLoading.value = false;
+  }
+}
+
 function selectSection(item: { key: string; href: string }) {
   navOpen.value = false;
   activeSection.value = item.key;
   if (item.key === 'articles') {
-    blogOpen.value = true;
+    void fetchBlogArticles();
   } else if (item.key === 'assets') {
     fetchAssets();
   }
@@ -1258,6 +1432,12 @@ async function handleHostMessage(event: MessageEvent) {
   }
 }
 
+function refreshArticlesWhenActive() {
+  if (activeSection.value === 'articles' && document.visibilityState === 'visible') {
+    void fetchBlogArticles();
+  }
+}
+
 async function chooseLocalWorkspace() {
   const selected = await desktopBridge?.chooseWorkspace?.();
   if (selected) workspaceRoot.value = selected;
@@ -1276,6 +1456,13 @@ onMounted(async () => {
     defaultAgentMode.value = savedMode;
     agentMode.value = savedMode;
   }
+  const savedZoom = localStorage.getItem('workbench:textZoomIndex');
+  if (savedZoom !== null) {
+    const savedIndex = Number.parseInt(savedZoom, 10);
+    if (Number.isInteger(savedIndex) && savedIndex >= 0 && savedIndex < textZoomLevels.length) {
+      await applyTextZoom(savedIndex, false);
+    }
+  }
   settingsForm.value = {
     nickname: user.value?.nickname || '',
     email: user.value?.email || '',
@@ -1285,6 +1472,9 @@ onMounted(async () => {
   fetchSessions();
   window.addEventListener('keydown', handleShortcut);
   window.addEventListener('message', handleHostMessage);
+  window.addEventListener('focus', refreshArticlesWhenActive);
+  document.addEventListener('visibilitychange', refreshArticlesWhenActive);
+  articlePollTimer = window.setInterval(refreshArticlesWhenActive, 30000);
   blogUrl.value = `${window.location.origin}/`;
   if (isDesktop.value) {
     try {
@@ -1305,6 +1495,9 @@ onUnmounted(() => {
   if (footer) (footer as HTMLElement).style.display = '';
   window.removeEventListener('keydown', handleShortcut);
   window.removeEventListener('message', handleHostMessage);
+  window.removeEventListener('focus', refreshArticlesWhenActive);
+  document.removeEventListener('visibilitychange', refreshArticlesWhenActive);
+  if (articlePollTimer !== null) window.clearInterval(articlePollTimer);
 });
 </script>
 
@@ -1322,6 +1515,7 @@ onUnmounted(() => {
   min-height: calc(100vh - 64px);
   padding: 18px clamp(14px, 2vw, 30px) 24px;
   overflow: hidden;
+  zoom: var(--wb-browser-zoom, 1);
   color: var(--wb-ink);
   isolation: isolate;
   background:
@@ -1496,6 +1690,48 @@ onUnmounted(() => {
   fill: none;
   stroke: currentColor;
   stroke-width: 1.7;
+}
+
+.font-zoom {
+  height: 32px;
+  padding: 0 4px;
+  border: 1px solid var(--wb-line);
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.font-zoom button {
+  min-width: 30px;
+  height: 24px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #697086;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.font-zoom button:hover:not(:disabled) {
+  background: rgba(91, 123, 255, 0.09);
+  color: var(--wb-blue-deep);
+}
+
+.font-zoom button:disabled {
+  color: #c0c4d0;
+  cursor: default;
+}
+
+.font-zoom span {
+  min-width: 32px;
+  color: #8a90a1;
+  font-size: 8px;
+  text-align: center;
 }
 
 .icon-button {
@@ -2533,6 +2769,241 @@ onUnmounted(() => {
 
 .workspace-view-heading.compact h1 {
   font-size: clamp(28px, 2.3vw, 42px);
+}
+
+.article-feed-view {
+  padding-bottom: 22px;
+}
+
+.article-feed-toolbar {
+  align-items: flex-end;
+}
+
+.article-feed-sync {
+  padding-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.live-indicator {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(34, 197, 94, 0.15);
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(34, 197, 94, 0.055);
+  color: #668073;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.live-indicator i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--wb-green);
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.08);
+}
+
+.article-feed-sync > button {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--wb-line);
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.62);
+  color: #777e91;
+  cursor: pointer;
+}
+
+.article-feed-sync > button:hover:not(:disabled) {
+  border-color: rgba(91, 123, 255, 0.24);
+  color: var(--wb-blue-deep);
+}
+
+.article-feed-sync > button:disabled svg {
+  animation: article-refresh 900ms linear infinite;
+}
+
+.article-feed-sync svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+}
+
+@keyframes article-refresh {
+  to { transform: rotate(360deg); }
+}
+
+.article-feed-summary {
+  margin-top: 20px;
+  padding: 10px 0;
+  border-top: 1px solid var(--wb-line);
+  border-bottom: 1px solid var(--wb-line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #9aa0af;
+  font-size: 9px;
+}
+
+.article-feed-summary strong {
+  margin-right: 4px;
+  color: var(--wb-blue-deep);
+  font-size: 13px;
+}
+
+.article-stream {
+  transition: opacity 160ms ease;
+}
+
+.article-stream.refreshing {
+  opacity: 0.72;
+}
+
+.article-stream-item {
+  min-width: 0;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--wb-line);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 82px;
+  gap: 14px;
+  transition: background 160ms ease;
+}
+
+.article-stream-item:hover {
+  background: linear-gradient(90deg, rgba(91, 123, 255, 0.035), transparent 80%);
+}
+
+.article-stream-open {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  display: grid;
+  grid-template-columns: 30px 92px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.article-order {
+  align-self: start;
+  padding-top: 4px;
+  color: #b4b9c7;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.article-thumb {
+  width: 92px;
+  height: 72px;
+  overflow: hidden;
+  border: 1px solid rgba(102, 111, 145, 0.1);
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 80% 15%, rgba(91, 123, 255, 0.2), transparent 42%),
+    linear-gradient(145deg, #edf1fb, #f7f8fc);
+  color: #7181d2;
+  font-size: 18px;
+  font-weight: 750;
+}
+
+.article-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.article-copy {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.article-meta-line {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #a0a5b3;
+  font-size: 8px;
+}
+
+.article-meta-line span:first-child {
+  color: var(--wb-blue-deep);
+  font-weight: 650;
+}
+
+.article-copy > strong {
+  overflow: hidden;
+  color: #3f4559;
+  font-size: clamp(13px, 0.9vw, 17px);
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.article-summary {
+  overflow: hidden;
+  color: #888e9f;
+  display: -webkit-box;
+  font-size: 9px;
+  line-height: 1.6;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.article-tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.article-tags i {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(91, 123, 255, 0.065);
+  color: #6378cd;
+  font-size: 7px;
+  font-style: normal;
+}
+
+.article-row-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 5px;
+}
+
+.article-row-actions button {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--wb-line);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.56);
+  color: #737a8e;
+  font: inherit;
+  font-size: 8px;
+  cursor: pointer;
+}
+
+.article-row-actions button:hover {
+  border-color: rgba(91, 123, 255, 0.24);
+  color: var(--wb-blue-deep);
 }
 
 .blog-launcher-view {
@@ -3581,6 +4052,10 @@ onUnmounted(() => {
 }
 
 @media (max-width: 1180px) {
+  .font-zoom span {
+    display: none;
+  }
+
   .workbench-layout {
     grid-template-columns: 210px minmax(430px, 1fr);
   }
@@ -3689,6 +4164,10 @@ onUnmounted(() => {
     flex-direction: column;
   }
 
+  .article-feed-sync {
+    padding-bottom: 0;
+  }
+
   .settings-grid {
     grid-template-columns: 1fr;
   }
@@ -3701,6 +4180,26 @@ onUnmounted(() => {
 
   .quick-card {
     min-height: 104px;
+  }
+
+  .article-stream-item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .article-stream-open {
+    grid-template-columns: 24px 72px minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .article-thumb {
+    width: 72px;
+    height: 60px;
+  }
+
+  .article-row-actions {
+    flex-direction: row;
+    justify-content: flex-end;
   }
 
   .section-title-row > span,
@@ -3858,7 +4357,10 @@ onUnmounted(() => {
 :global(.dark-mode .current-task),
 :global(.dark-mode .source-card),
 :global(.dark-mode .mode-card),
-:global(.dark-mode .composer) {
+:global(.dark-mode .composer),
+:global(.dark-mode .font-zoom),
+:global(.dark-mode .article-feed-sync > button),
+:global(.dark-mode .article-row-actions button) {
   background: rgba(34, 37, 52, 0.78);
 }
 
@@ -3874,8 +4376,15 @@ onUnmounted(() => {
 :global(.dark-mode .task-heading h2),
 :global(.dark-mode .context-heading h2),
 :global(.dark-mode .source-card strong),
-:global(.dark-mode .mode-card strong) {
+:global(.dark-mode .mode-card strong),
+:global(.dark-mode .article-copy > strong) {
   color: #e7eaf3;
+}
+
+:global(.dark-mode .article-summary),
+:global(.dark-mode .article-meta-line),
+:global(.dark-mode .font-zoom span) {
+  color: #9ca3b8;
 }
 
 :global(.dark-mode .context-tabs) {
