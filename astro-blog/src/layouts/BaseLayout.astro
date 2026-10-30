@@ -1,0 +1,127 @@
+---
+import '@fontsource/inter/400.css';
+import '@fontsource/inter/500.css';
+import '@fontsource/inter/600.css';
+import '@fontsource/inter/700.css';
+import '@styles/agent-markdown.css';
+import '@styles/global.css';
+
+import Header from '@components/astro/Header.astro';
+import Footer from '@components/astro/Footer.astro';
+import SEO from '@components/astro/SEO.astro';
+import SearchOverlay from '@components/vue/SearchOverlay.vue';
+import AIChatWidget from '@components/vue/AIChatWidget.vue';
+import BlurControl from '@components/vue/BlurControl.vue';
+import { ViewTransitions } from 'astro:transitions';
+
+interface Props {
+  title?: string;
+  description?: string;
+  ogImage?: string;
+}
+
+const { title, description, ogImage } = Astro.props;
+const pageTitle = title ? `${title} - Ray的垃圾站` : 'Ray的垃圾站';
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <SEO title={pageTitle} description={description} ogImage={ogImage} />
+    <script>
+      // Global audio engine - survives ViewTransitions navigation
+      if (!window.__m) {
+        (function(){
+          var audio=null;
+          var volume=0.7;
+          var currentUrl='';
+          function normalized(url){return new URL(url,window.location.href).href;}
+          function setTime(target,time){
+            if(!Number.isFinite(time)||time<0) return;
+            var apply=function(){try{target.currentTime=time;}catch(_){}};
+            if(target.readyState>=1) apply();
+            else target.addEventListener('loadedmetadata',apply,{once:true});
+          }
+          function ensure(url){
+            var nextUrl=normalized(url);
+            if(audio&&currentUrl===nextUrl) return audio;
+            if(audio){audio.pause();audio.remove();}
+            audio=new Audio(nextUrl);
+            audio.preload='metadata';
+            audio.volume=volume;
+            currentUrl=nextUrl;
+            audio.addEventListener('play',function(){window.dispatchEvent(new CustomEvent('music:state',{detail:{playing:true}}));});
+            audio.addEventListener('pause',function(){window.dispatchEvent(new CustomEvent('music:state',{detail:{playing:false}}));});
+            audio.addEventListener('ended',function(){window.dispatchEvent(new CustomEvent('music:ended'));});
+            audio.addEventListener('error',function(){window.dispatchEvent(new CustomEvent('music:error',{detail:{message:'音频加载失败'}}));});
+            return audio;
+          }
+          window.__m={
+            load:function(url,nextVolume,time){
+              if(typeof nextVolume==='number'&&Number.isFinite(nextVolume)) volume=Math.max(0,Math.min(1,nextVolume));
+              var target=ensure(url);
+              target.volume=volume;
+              if(typeof time==='number') setTime(target,time);
+              return target;
+            },
+            play:function(url,nextVolume,time){
+              var target=this.load(url,nextVolume,time);
+              return target.play();
+            },
+            pause:function(){if(audio)audio.pause();},
+            setVol:function(nextVolume){
+              if(typeof nextVolume==='number'&&Number.isFinite(nextVolume)) volume=Math.max(0,Math.min(1,nextVolume));
+              if(audio)audio.volume=volume;
+            },
+            seek:function(time){if(audio)setTime(audio,time);},
+            getAudio:function(){return audio;},
+            getVolume:function(){return volume;},
+            isPlaying:function(){return audio?!audio.paused:false;},
+            getTime:function(){return audio?audio.currentTime||0:0;}
+          };
+        })();
+      }
+      // Dynamic background - survives ViewTransitions
+      (function(){
+        var cached = localStorage.getItem('_bgUrl');
+        function applyBg(url){
+          if(!url) return;
+          document.body.style.setProperty('background','url('+url+') center / cover fixed','important');
+          var overlay=document.getElementById('bg-overlay');
+          if(overlay) overlay.style.display='none';
+        }
+        // 优先用缓存（避免切换页面闪烁）
+        if(cached) applyBg(cached);
+        // 从服务端获取最新
+        fetch('/api/site/background').then(r=>r.json()).then(d=>{
+          if(d.data&&d.data.hasCustom&&d.data.url){
+            localStorage.setItem('_bgUrl', d.data.url);
+            applyBg(d.data.url);
+          } else {
+            localStorage.removeItem('_bgUrl');
+          }
+        }).catch(function(){});
+        // ViewTransitions 页面切换后重新应用
+        document.addEventListener('astro:after-swap', function(){
+          var url = localStorage.getItem('_bgUrl');
+          applyBg(url);  // url 为空则用默认白色，有则用壁纸
+        });
+      })();
+    </script>
+    <ViewTransitions />
+  </head>
+  <body class="min-h-screen flex flex-col">
+    <div id="bg-overlay"></div>
+    <Header />
+    <main class="flex-1 page-enter">
+      <slot />
+    </main>
+    <Footer />
+    <SearchOverlay client:only="vue" />
+    <AIChatWidget client:only="vue" />
+    <BlurControl client:only="vue" />
+  </body>
+</html>
