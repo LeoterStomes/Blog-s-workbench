@@ -19,4 +19,12 @@ if (!/font-size\s*:\s*[^;]*var\(--wb-font-scale\)/i.test(workbenchCss)) {
   throw new Error('Workbench font sizes must use the --wb-font-scale token');
 }
 
+if (!/\.workbench-main(?:\s|\[|:)[^{]*\{[^}]*min-height\s*:\s*0/i.test(workbenchCss)) {
+  throw new Error('Workbench main column must be allowed to shrink to the layout height');
+}
+
+if (!/\.task-feed(?:\s|\[|:)[^{]*\{[^}]*overscroll-behavior\s*:\s*contain/i.test(workbenchCss)) {
+  throw new Error('Task feed must own wheel scrolling inside the chat area');
+}
+
 console.log('Workbench CSS scope check passed');

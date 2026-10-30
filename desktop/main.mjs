@@ -259,6 +259,15 @@ async function captureQaScreenshot() {
     );
     await new Promise(resolveWait => setTimeout(resolveWait, 2500));
   }
+  const qaRecentTaskIndex = Number(process.env.WORKBENCH_QA_RECENT_TASK_INDEX ?? -1);
+  if (qaRecentTaskIndex >= 0) {
+    await mainWindow.webContents.executeJavaScript(`(() => {
+      const tasks = document.querySelectorAll('.recent-task');
+      tasks[${qaRecentTaskIndex}]?.click();
+      return tasks.length;
+    })()`, true);
+    await new Promise(resolveWait => setTimeout(resolveWait, 2500));
+  }
   const qaArticleId = process.env.WORKBENCH_QA_ARTICLE_ID;
   if (qaArticleId) {
     const articleUrl = `${localServer.url}/blog/${encodeURIComponent(qaArticleId)}`;
@@ -344,6 +353,18 @@ async function captureQaScreenshot() {
       if (!context) return false;
       const rect = context.getBoundingClientRect();
       return rect.right > 0 && rect.left < window.innerWidth && rect.width > 0;
+    })(),
+    taskScroll: (() => {
+      const feed = document.querySelector('.task-feed');
+      const workspace = document.querySelector('.task-workspace');
+      const main = document.querySelector('.main-scroll');
+      const metrics = element => element ? {
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+        scrollTop: element.scrollTop,
+        overflowY: getComputedStyle(element).overflowY
+      } : null;
+      return { feed: metrics(feed), workspace: metrics(workspace), main: metrics(main) };
     })()
   })`, true);
   console.log(`[qa] page=${JSON.stringify(pageState)}`);

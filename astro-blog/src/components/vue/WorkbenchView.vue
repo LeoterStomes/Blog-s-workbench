@@ -213,7 +213,13 @@
               </div>
             </div>
 
-            <div ref="taskFeedRef" class="task-feed" role="log" aria-live="polite">
+            <div
+              ref="taskFeedRef"
+              class="task-feed"
+              role="log"
+              aria-live="polite"
+              @scroll.passive="handleTaskFeedScroll"
+            >
               <article
                 v-for="event in taskEvents"
                 :key="event.id"
@@ -684,6 +690,7 @@ const taskEvents = ref<TaskEvent[]>([]);
 const sessionId = ref<string | null>(null);
 const taskStatus = ref<TaskStatus>('idle');
 const taskTitle = ref('');
+const taskFeedFollowing = ref(true);
 const uploadingFiles = ref(false);
 const streamCtrl = ref<AbortController | null>(null);
 const desktopBridge = (window as any).desktop as {
@@ -945,6 +952,7 @@ function startNewTask() {
   taskEvents.value = [];
   taskFiles.value = [];
   taskTitle.value = '';
+  taskFeedFollowing.value = true;
   taskStatus.value = 'idle';
   activeSection.value = 'overview';
   agentMode.value = defaultAgentMode.value;
@@ -989,9 +997,18 @@ function pushEvent(event: Omit<TaskEvent, 'id'>) {
   scrollTaskFeed();
 }
 
-function scrollTaskFeed() {
+function handleTaskFeedScroll() {
+  const feed = taskFeedRef.value;
+  if (!feed) return;
+  taskFeedFollowing.value = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 96;
+}
+
+function scrollTaskFeed(force = false) {
   nextTick(() => {
-    if (taskFeedRef.value) taskFeedRef.value.scrollTop = taskFeedRef.value.scrollHeight;
+    const feed = taskFeedRef.value;
+    if (!feed || (!force && !taskFeedFollowing.value)) return;
+    feed.scrollTop = feed.scrollHeight;
+    taskFeedFollowing.value = true;
   });
 }
 
@@ -1252,7 +1269,7 @@ async function loadTaskSession(id: string) {
     taskTitle.value = firstUserMessage || selectedSession?.title || '历史任务';
     taskStatus.value = 'done';
     draft.value = '';
-    scrollTaskFeed();
+    scrollTaskFeed(true);
   } catch (error) {
     taskStatus.value = 'error';
     pushEvent({ type: 'error', content: error instanceof Error ? error.message : '任务加载失败' });
@@ -2097,6 +2114,9 @@ onUnmounted(() => {
 
 .workbench-main {
   min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   background:
@@ -2106,6 +2126,7 @@ onUnmounted(() => {
 
 .main-scroll {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding:
     clamp(34px, 4.5vh, 88px)
@@ -2115,6 +2136,9 @@ onUnmounted(() => {
 
 .main-scroll.task-active {
   min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
   padding: clamp(24px, 3vw, 38px) clamp(24px, 4vw, 56px) 18px;
   overflow: hidden;
 }
@@ -2468,7 +2492,7 @@ onUnmounted(() => {
 }
 
 .task-workspace {
-  height: 100%;
+  flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -2492,7 +2516,31 @@ onUnmounted(() => {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(110, 120, 154, 0.35) transparent;
+  scrollbar-gutter: stable;
   padding: 2px 4px 26px 1px;
+}
+
+.task-feed::-webkit-scrollbar {
+  width: 7px;
+}
+
+.task-feed::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.task-feed::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgba(110, 120, 154, 0.34);
+  background-clip: padding-box;
+}
+
+.task-feed::-webkit-scrollbar-thumb:hover {
+  background: rgba(91, 123, 255, 0.55);
+  background-clip: padding-box;
 }
 
 .task-event {
