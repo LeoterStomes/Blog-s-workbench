@@ -1,5 +1,5 @@
 <template>
-  <div class="workbench">
+  <div class="workbench" :style="{ '--wb-font-scale': textZoomFactor }">
     <div class="workbench-glow" />
 
     <header class="workbench-topbar">
@@ -689,7 +689,6 @@ const streamCtrl = ref<AbortController | null>(null);
 const desktopBridge = (window as any).desktop as {
   isElectron?: boolean;
   getInfo?: () => Promise<{ appVersion?: string }>;
-  setZoomFactor?: (factor: number) => Promise<number>;
   getWorkspace?: () => Promise<string>;
   chooseWorkspace?: () => Promise<string | null>;
   openWorkspace?: () => Promise<string>;
@@ -771,6 +770,7 @@ const agentModes = [
 const activeMode = computed(() => (
   agentModes.find(mode => mode.value === agentMode.value) || agentModes[1]
 ));
+const textZoomFactor = computed(() => String(textZoomLevels[textZoomIndex.value]));
 const textZoomLabel = computed(() => `${Math.round(textZoomLevels[textZoomIndex.value] * 100)}%`);
 const articleSyncLabel = computed(() => {
   if (articleLoading.value && !articleUpdatedAt.value) return '正在同步';
@@ -864,20 +864,10 @@ const quickActions = [
   },
 ];
 
-async function applyTextZoom(index: number, persist = true) {
+function applyTextZoom(index: number, persist = true) {
   const nextIndex = Math.min(textZoomLevels.length - 1, Math.max(0, index));
   textZoomIndex.value = nextIndex;
-  const factor = textZoomLevels[nextIndex];
   if (persist) localStorage.setItem('workbench:textZoomIndex', String(nextIndex));
-  if (desktopBridge?.setZoomFactor) {
-    try {
-      await desktopBridge.setZoomFactor(factor);
-    } catch {
-      document.documentElement.style.setProperty('--wb-browser-zoom', String(factor));
-    }
-  } else {
-    document.documentElement.style.setProperty('--wb-browser-zoom', String(factor));
-  }
 }
 
 function changeTextZoom(direction: number) {
@@ -1460,7 +1450,7 @@ onMounted(async () => {
   if (savedZoom !== null) {
     const savedIndex = Number.parseInt(savedZoom, 10);
     if (Number.isInteger(savedIndex) && savedIndex >= 0 && savedIndex < textZoomLevels.length) {
-      await applyTextZoom(savedIndex, false);
+      applyTextZoom(savedIndex, false);
     }
   }
   settingsForm.value = {
@@ -1511,11 +1501,11 @@ onUnmounted(() => {
   --wb-line: rgba(98, 106, 140, 0.14);
   --wb-panel: rgba(255, 255, 255, 0.82);
   --wb-soft: rgba(245, 247, 252, 0.88);
+  --wb-font-scale: 1;
   position: relative;
   min-height: calc(100vh - 64px);
   padding: 18px clamp(14px, 2vw, 30px) 24px;
   overflow: hidden;
-  zoom: var(--wb-browser-zoom, 1);
   color: var(--wb-ink);
   isolation: isolate;
   background:
@@ -1561,7 +1551,7 @@ onUnmounted(() => {
 
 .breadcrumb {
   gap: 9px;
-  font-size: 12px;
+  font-size: calc(var(--wb-font-scale) * 12px);
   color: var(--wb-muted);
 }
 
@@ -1577,7 +1567,7 @@ onUnmounted(() => {
   display: grid;
   place-items: center;
   color: white;
-  font-size: 12px;
+  font-size: calc(var(--wb-font-scale) * 12px);
   font-weight: 800;
   background: linear-gradient(145deg, var(--wb-blue), var(--wb-blue-deep));
   box-shadow: 0 5px 14px rgba(91, 123, 255, 0.24);
@@ -1594,7 +1584,7 @@ onUnmounted(() => {
   border: 1px solid var(--wb-line);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.54);
-  font-size: 11px;
+  font-size: calc(var(--wb-font-scale) * 11px);
   color: #5f667a;
   backdrop-filter: blur(12px);
 }
@@ -1625,7 +1615,7 @@ onUnmounted(() => {
 .quiet-button {
   padding: 8px 12px;
   color: #626a82;
-  font-size: 12px;
+  font-size: calc(var(--wb-font-scale) * 12px);
   border-radius: 9px;
   text-decoration: none;
   transition: 160ms ease;
@@ -1641,7 +1631,7 @@ onUnmounted(() => {
   border-radius: 6px;
   background: rgba(23, 27, 46, 0.06);
   color: #7c8296;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
   font-weight: 650;
 }
 
@@ -1652,7 +1642,7 @@ onUnmounted(() => {
   border-radius: 9px;
   background: rgba(91, 123, 255, 0.07);
   color: var(--wb-blue-deep);
-  font-size: 10px;
+  font-size: calc(var(--wb-font-scale) * 10px);
   font-weight: 600;
   cursor: pointer;
   transition: 160ms ease;
@@ -1673,7 +1663,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 10px;
+  font-size: calc(var(--wb-font-scale) * 10px);
   font-weight: 600;
   cursor: pointer;
   transition: 160ms ease;
@@ -1712,7 +1702,7 @@ onUnmounted(() => {
   background: transparent;
   color: #697086;
   font: inherit;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
   font-weight: 650;
   cursor: pointer;
 }
@@ -1730,7 +1720,7 @@ onUnmounted(() => {
 .font-zoom span {
   min-width: 32px;
   color: #8a90a1;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
   text-align: center;
 }
 
@@ -1830,7 +1820,7 @@ onUnmounted(() => {
 }
 
 .brand-orbit span {
-  font-size: 13px;
+  font-size: calc(var(--wb-font-scale) * 13px);
   font-weight: 800;
   color: var(--wb-blue-deep);
 }
@@ -1841,14 +1831,14 @@ onUnmounted(() => {
 }
 
 .brand-name {
-  font-size: 11px;
+  font-size: calc(var(--wb-font-scale) * 11px);
   font-weight: 800;
   letter-spacing: 0.14em;
 }
 
 .brand-caption {
   margin-top: 3px;
-  font-size: 7px;
+  font-size: calc(var(--wb-font-scale) * 7px);
   letter-spacing: 0.16em;
   color: #9ba1b3;
 }
@@ -1884,7 +1874,7 @@ onUnmounted(() => {
 .new-task-button span {
   flex: 1;
   text-align: left;
-  font-size: 12px;
+  font-size: calc(var(--wb-font-scale) * 12px);
   font-weight: 600;
 }
 
@@ -1893,7 +1883,7 @@ onUnmounted(() => {
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 4px;
   color: rgba(255, 255, 255, 0.48);
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
 }
 
 .primary-nav {
@@ -1913,7 +1903,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 12px;
+  font-size: calc(var(--wb-font-scale) * 12px);
   cursor: pointer;
   transition: 150ms ease;
 }
@@ -1950,7 +1940,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: rgba(91, 123, 255, 0.1);
   color: var(--wb-blue-deep);
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
 }
 
 .recent-section {
@@ -1971,7 +1961,7 @@ onUnmounted(() => {
 .section-heading {
   padding: 0 7px 8px;
   color: #9a9fb0;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -1987,7 +1977,7 @@ onUnmounted(() => {
 .recent-empty {
   padding: 14px 8px;
   color: #a1a6b7;
-  font-size: 10px;
+  font-size: calc(var(--wb-font-scale) * 10px);
   line-height: 1.6;
 }
 
@@ -2042,13 +2032,13 @@ onUnmounted(() => {
 
 .recent-copy strong {
   color: #50566b;
-  font-size: 10px;
+  font-size: calc(var(--wb-font-scale) * 10px);
   font-weight: 600;
 }
 
 .recent-copy small {
   color: #a0a5b4;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
 }
 
 .nav-footer {
@@ -2079,7 +2069,7 @@ onUnmounted(() => {
   place-items: center;
   background: rgba(91, 123, 255, 0.12);
   color: var(--wb-blue-deep);
-  font-size: 11px;
+  font-size: calc(var(--wb-font-scale) * 11px);
   font-weight: 800;
 }
 
@@ -2091,12 +2081,12 @@ onUnmounted(() => {
 }
 
 .account-copy strong {
-  font-size: 10px;
+  font-size: calc(var(--wb-font-scale) * 10px);
   color: #53596e;
 }
 
 .account-copy small {
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
   color: #a3a8b7;
 }
 
@@ -2160,7 +2150,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   color: #969caf;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
   font-weight: 600;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -2175,7 +2165,7 @@ onUnmounted(() => {
 .intro-block h1 {
   margin: 21px 0 15px;
   color: var(--wb-ink);
-  font-size: clamp(40px, 4.4vw, 88px);
+  font-size: clamp(calc(var(--wb-font-scale) * 40px), 4.4vw, calc(var(--wb-font-scale) * 88px));
   font-weight: 650;
   line-height: 0.98;
   letter-spacing: -0.055em;
@@ -2190,7 +2180,7 @@ onUnmounted(() => {
   max-width: 510px;
   margin: 0;
   color: #777e92;
-  font-size: 12px;
+  font-size: calc(var(--wb-font-scale) * 12px);
   line-height: 1.8;
   text-wrap: pretty;
 }
@@ -2216,12 +2206,12 @@ onUnmounted(() => {
 }
 
 .section-title-row h2 {
-  font-size: 13px;
+  font-size: calc(var(--wb-font-scale) * 13px);
 }
 
 .section-title-row > span {
   color: #a2a7b6;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
 }
 
 .quick-grid {
@@ -2254,7 +2244,7 @@ onUnmounted(() => {
   right: 14px;
   top: 12px;
   color: rgba(91, 123, 255, 0.4);
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
   font-weight: 700;
   letter-spacing: 0.1em;
 }
@@ -2287,7 +2277,7 @@ onUnmounted(() => {
 
 .quick-card strong {
   color: #3f455a;
-  font-size: clamp(11px, 0.72vw, 14px);
+  font-size: clamp(calc(var(--wb-font-scale) * 11px), 0.72vw, calc(var(--wb-font-scale) * 14px));
   font-weight: 650;
 }
 
@@ -2295,7 +2285,7 @@ onUnmounted(() => {
   max-width: 82%;
   margin-top: 5px;
   color: #969caf;
-  font-size: clamp(9px, 0.58vw, 11px);
+  font-size: clamp(calc(var(--wb-font-scale) * 9px), 0.58vw, calc(var(--wb-font-scale) * 11px));
   line-height: 1.55;
   text-wrap: pretty;
 }
@@ -2332,13 +2322,13 @@ onUnmounted(() => {
   display: block;
   margin-bottom: 5px;
   color: #a0a5b4;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
   font-weight: 700;
   letter-spacing: 0.13em;
 }
 
 .task-heading h2 {
-  font-size: 15px;
+  font-size: calc(var(--wb-font-scale) * 15px);
 }
 
 .task-status-group {
@@ -2352,7 +2342,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: rgba(91, 123, 255, 0.07);
   color: var(--wb-blue-deep);
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
   font-weight: 650;
 }
 
@@ -2361,7 +2351,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: #eef0f5;
   color: #9096a7;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
   font-weight: 650;
 }
 
@@ -2383,7 +2373,7 @@ onUnmounted(() => {
 .draft-preview p {
   margin: 16px 0;
   color: #51576b;
-  font-size: 12px;
+  font-size: calc(var(--wb-font-scale) * 12px);
   line-height: 1.75;
   text-wrap: pretty;
 }
@@ -2406,7 +2396,7 @@ onUnmounted(() => {
   border: 0;
   background: transparent;
   color: #8e94a5;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
 }
 
 .execute-button {
@@ -2417,7 +2407,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
   font-weight: 600;
 }
 
@@ -2448,7 +2438,7 @@ onUnmounted(() => {
   border: 1px solid #dfe2e9;
   border-radius: 50%;
   color: #b0b5c2;
-  font-size: 7px;
+  font-size: calc(var(--wb-font-scale) * 7px);
 }
 
 .task-rail i {
@@ -2460,20 +2450,20 @@ onUnmounted(() => {
 .task-empty-copy strong {
   display: block;
   color: #4b5166;
-  font-size: 10px;
+  font-size: calc(var(--wb-font-scale) * 10px);
 }
 
 .task-empty-copy p {
   max-width: 410px;
   margin: 4px 0 0;
   color: #999faf;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
   line-height: 1.6;
 }
 
 .task-placeholder {
   color: #b2b6c2;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
   white-space: nowrap;
 }
 
@@ -2529,7 +2519,7 @@ onUnmounted(() => {
   border-radius: 14px 14px 4px 14px;
   background: var(--wb-ink);
   color: white;
-  font-size: 11px;
+  font-size: calc(var(--wb-font-scale) * 11px);
   line-height: 1.7;
   white-space: pre-wrap;
   text-wrap: pretty;
@@ -2543,7 +2533,7 @@ onUnmounted(() => {
   border-radius: 8px;
   display: grid;
   place-items: center;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
   font-weight: 750;
 }
 
@@ -2571,7 +2561,7 @@ onUnmounted(() => {
 
 .event-label {
   color: #6c7387;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
   font-weight: 650;
 }
 
@@ -2580,7 +2570,7 @@ onUnmounted(() => {
   margin: 5px 0 0;
   overflow: hidden;
   color: #8f95a6;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
   line-height: 1.65;
   white-space: pre-wrap;
   mask-image: linear-gradient(to bottom, black 68%, transparent 100%);
@@ -2627,14 +2617,14 @@ onUnmounted(() => {
   margin: 3px 0 0;
   overflow: hidden;
   color: #9ca1b0;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .tool-state-text {
   color: #9ca1b0;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
 }
 
 .event-assistant {
@@ -2644,7 +2634,7 @@ onUnmounted(() => {
   border-radius: 4px 15px 15px 15px;
   background: rgba(255, 255, 255, 0.74);
   color: #50566b;
-  font-size: 11px;
+  font-size: calc(var(--wb-font-scale) * 11px);
   line-height: 1.75;
 }
 
@@ -2686,14 +2676,14 @@ onUnmounted(() => {
 .event-artifact strong {
   overflow: hidden;
   color: #4d5367;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .event-artifact small {
   color: #96a09f;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
 }
 
 .event-artifact a {
@@ -2701,7 +2691,7 @@ onUnmounted(() => {
   border-radius: 7px;
   background: #159849;
   color: white;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
   text-decoration: none;
 }
 
@@ -2711,7 +2701,7 @@ onUnmounted(() => {
   border-radius: 10px;
   background: rgba(239, 68, 68, 0.05);
   color: #cf4141;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
   line-height: 1.6;
 }
 
@@ -2736,7 +2726,7 @@ onUnmounted(() => {
 .stream-pulse small {
   margin-left: 5px;
   color: #a1a6b5;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
 }
 
 @keyframes stream-dot {
@@ -2752,7 +2742,7 @@ onUnmounted(() => {
 .workspace-view-heading h1 {
   margin: 10px 0 12px;
   color: var(--wb-ink);
-  font-size: clamp(30px, 3vw, 54px);
+  font-size: clamp(calc(var(--wb-font-scale) * 30px), 3vw, calc(var(--wb-font-scale) * 54px));
   font-weight: 650;
   line-height: 1.05;
   letter-spacing: -0.045em;
@@ -2762,13 +2752,13 @@ onUnmounted(() => {
   max-width: 620px;
   margin: 0;
   color: #858b9d;
-  font-size: clamp(11px, 0.7vw, 15px);
+  font-size: clamp(calc(var(--wb-font-scale) * 11px), 0.7vw, calc(var(--wb-font-scale) * 15px));
   line-height: 1.75;
   text-wrap: pretty;
 }
 
 .workspace-view-heading.compact h1 {
-  font-size: clamp(28px, 2.3vw, 42px);
+  font-size: clamp(calc(var(--wb-font-scale) * 28px), 2.3vw, calc(var(--wb-font-scale) * 42px));
 }
 
 .article-feed-view {
@@ -2796,7 +2786,7 @@ onUnmounted(() => {
   gap: 7px;
   background: rgba(34, 197, 94, 0.055);
   color: #668073;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
   white-space: nowrap;
 }
 
@@ -2850,13 +2840,13 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   color: #9aa0af;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
 }
 
 .article-feed-summary strong {
   margin-right: 4px;
   color: var(--wb-blue-deep);
-  font-size: 13px;
+  font-size: calc(var(--wb-font-scale) * 13px);
 }
 
 .article-stream {
@@ -2901,7 +2891,7 @@ onUnmounted(() => {
   padding-top: 4px;
   color: #b4b9c7;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
   letter-spacing: 0.08em;
 }
 
@@ -2917,7 +2907,7 @@ onUnmounted(() => {
     radial-gradient(circle at 80% 15%, rgba(91, 123, 255, 0.2), transparent 42%),
     linear-gradient(145deg, #edf1fb, #f7f8fc);
   color: #7181d2;
-  font-size: 18px;
+  font-size: calc(var(--wb-font-scale) * 18px);
   font-weight: 750;
 }
 
@@ -2938,7 +2928,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 9px;
   color: #a0a5b3;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
 }
 
 .article-meta-line span:first-child {
@@ -2949,7 +2939,7 @@ onUnmounted(() => {
 .article-copy > strong {
   overflow: hidden;
   color: #3f4559;
-  font-size: clamp(13px, 0.9vw, 17px);
+  font-size: clamp(calc(var(--wb-font-scale) * 13px), 0.9vw, calc(var(--wb-font-scale) * 17px));
   font-weight: 650;
   line-height: 1.35;
   text-overflow: ellipsis;
@@ -2960,7 +2950,7 @@ onUnmounted(() => {
   overflow: hidden;
   color: #888e9f;
   display: -webkit-box;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
   line-height: 1.6;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -2977,7 +2967,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: rgba(91, 123, 255, 0.065);
   color: #6378cd;
-  font-size: 7px;
+  font-size: calc(var(--wb-font-scale) * 7px);
   font-style: normal;
 }
 
@@ -2997,7 +2987,7 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.56);
   color: #737a8e;
   font: inherit;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
   cursor: pointer;
 }
 
@@ -3026,7 +3016,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   font: inherit;
-  font-size: 11px;
+  font-size: calc(var(--wb-font-scale) * 11px);
   font-weight: 650;
   cursor: pointer;
   box-shadow: 0 10px 24px rgba(91, 123, 255, 0.22);
@@ -3056,7 +3046,7 @@ onUnmounted(() => {
   color: white;
   display: grid;
   place-items: center;
-  font-size: 10px;
+  font-size: calc(var(--wb-font-scale) * 10px);
   font-weight: 650;
   cursor: pointer;
 }
@@ -3081,7 +3071,7 @@ onUnmounted(() => {
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.45);
   color: #9298a8;
-  font-size: 11px;
+  font-size: calc(var(--wb-font-scale) * 11px);
 }
 
 .workspace-notice a,
@@ -3113,7 +3103,7 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.58);
   color: #868c9e;
   font: inherit;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
   cursor: pointer;
 }
 
@@ -3178,7 +3168,7 @@ onUnmounted(() => {
   place-items: center;
   background: rgba(255, 255, 255, 0.7);
   color: var(--wb-blue-deep);
-  font-size: 18px;
+  font-size: calc(var(--wb-font-scale) * 18px);
   font-weight: 750;
 }
 
@@ -3197,7 +3187,7 @@ onUnmounted(() => {
   flex: 1;
   overflow: hidden;
   color: #50566b;
-  font-size: 10px;
+  font-size: calc(var(--wb-font-scale) * 10px);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3207,7 +3197,7 @@ onUnmounted(() => {
   border-radius: 999px;
   background: rgba(91, 123, 255, 0.07);
   color: var(--wb-blue-deep);
-  font-size: 7px;
+  font-size: calc(var(--wb-font-scale) * 7px);
 }
 
 .asset-card-meta {
@@ -3215,7 +3205,7 @@ onUnmounted(() => {
   display: flex;
   gap: 8px;
   color: #a0a5b3;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
 }
 
 .asset-card-actions {
@@ -3235,7 +3225,7 @@ onUnmounted(() => {
   background: transparent;
   color: #71788c;
   font: inherit;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
   text-decoration: none;
   cursor: pointer;
 }
@@ -3269,13 +3259,13 @@ onUnmounted(() => {
 
 .settings-card-head span {
   color: #4d5367;
-  font-size: 11px;
+  font-size: calc(var(--wb-font-scale) * 11px);
   font-weight: 650;
 }
 
 .settings-card-head small {
   color: #a0a5b3;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
 }
 
 .settings-card label {
@@ -3283,7 +3273,7 @@ onUnmounted(() => {
   gap: 6px;
   margin-top: 10px;
   color: #8a90a1;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
 }
 
 .settings-card input {
@@ -3295,7 +3285,7 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.72);
   color: #4f566a;
   font: inherit;
-  font-size: 10px;
+  font-size: calc(var(--wb-font-scale) * 10px);
 }
 
 .settings-card input:focus {
@@ -3312,7 +3302,7 @@ onUnmounted(() => {
 
 .settings-card-foot span {
   color: #789181;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
 }
 
 .settings-card-foot button,
@@ -3324,7 +3314,7 @@ onUnmounted(() => {
   background: var(--wb-ink);
   color: white;
   font: inherit;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
   cursor: pointer;
 }
 
@@ -3346,12 +3336,12 @@ onUnmounted(() => {
 }
 
 .settings-mode-list button strong {
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
 }
 
 .settings-mode-list button small {
   color: #a0a5b3;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
 }
 
 .settings-mode-list button.active {
@@ -3368,7 +3358,7 @@ onUnmounted(() => {
   background: rgba(238, 241, 247, 0.75);
   color: #747b8e;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
   line-height: 1.6;
   word-break: break-all;
 }
@@ -3412,12 +3402,12 @@ onUnmounted(() => {
 
 .settings-source strong {
   color: #565c70;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
 }
 
 .settings-source small {
   color: #a0a5b3;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
 }
 
 .composer {
@@ -3477,7 +3467,7 @@ onUnmounted(() => {
   background: transparent;
   color: #30364b;
   font: inherit;
-  font-size: 12px;
+  font-size: calc(var(--wb-font-scale) * 12px);
   line-height: 1.5;
 }
 
@@ -3520,7 +3510,7 @@ onUnmounted(() => {
   justify-content: space-between;
   padding: 5px 42px 0;
   color: #a3a8b6;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
 }
 
 .workbench-context {
@@ -3538,7 +3528,7 @@ onUnmounted(() => {
 }
 
 .context-heading h2 {
-  font-size: 15px;
+  font-size: calc(var(--wb-font-scale) * 15px);
 }
 
 .context-tabs {
@@ -3556,7 +3546,7 @@ onUnmounted(() => {
   border-radius: 7px;
   background: transparent;
   color: #989dac;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
 }
 
 .context-tabs button.active {
@@ -3573,13 +3563,13 @@ onUnmounted(() => {
 .context-section-head {
   margin-bottom: 9px;
   color: #777e92;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
   font-weight: 600;
 }
 
 .context-section-head small {
   color: #a4a9b7;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
   font-weight: 400;
 }
 
@@ -3637,14 +3627,14 @@ onUnmounted(() => {
 .source-card strong,
 .mode-card strong {
   color: #51576b;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
   font-weight: 600;
 }
 
 .source-card small,
 .mode-card small {
   color: #a0a5b3;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
 }
 
 .source-card > i {
@@ -3710,7 +3700,7 @@ onUnmounted(() => {
   background: transparent;
   color: #9298a8;
   font: inherit;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
   cursor: pointer;
   transition: 150ms ease;
 }
@@ -3744,7 +3734,7 @@ onUnmounted(() => {
   border-radius: 8px;
   background: var(--wb-ink);
   color: white;
-  font-size: 10px;
+  font-size: calc(var(--wb-font-scale) * 10px);
   font-weight: 700;
 }
 
@@ -3765,7 +3755,7 @@ onUnmounted(() => {
   gap: 8px;
   padding: 5px 8px;
   color: #8f95a5;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
 }
 
 .tool-mini-item .tool-status-dot {
@@ -3808,7 +3798,7 @@ onUnmounted(() => {
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.6);
   color: #5e6579;
-  font-size: 10px;
+  font-size: calc(var(--wb-font-scale) * 10px);
   line-height: 1.7;
 }
 
@@ -3820,9 +3810,9 @@ onUnmounted(() => {
   line-height: 1.25;
 }
 
-.artifact-content :deep(h1) { font-size: 17px; }
-.artifact-content :deep(h2) { font-size: 14px; }
-.artifact-content :deep(h3) { font-size: 12px; }
+.artifact-content :deep(h1) { font-size: calc(var(--wb-font-scale) * 17px); }
+.artifact-content :deep(h2) { font-size: calc(var(--wb-font-scale) * 14px); }
+.artifact-content :deep(h3) { font-size: calc(var(--wb-font-scale) * 12px); }
 .artifact-content :deep(p) { margin: 0.6em 0; }
 .artifact-content :deep(ul),
 .artifact-content :deep(ol) { padding-left: 18px; }
@@ -3832,7 +3822,7 @@ onUnmounted(() => {
   border-radius: 8px;
   background: #1e2230;
   color: #e7eaf3;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
 }
 
 .artifact-links {
@@ -3879,7 +3869,7 @@ onUnmounted(() => {
   min-width: 0;
   overflow: hidden;
   color: #555b70;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
@@ -3887,7 +3877,7 @@ onUnmounted(() => {
 
 .artifact-links small {
   color: #9ba0af;
-  font-size: 7px;
+  font-size: calc(var(--wb-font-scale) * 7px);
 }
 
 .artifact-placeholder > svg {
@@ -3901,14 +3891,14 @@ onUnmounted(() => {
 
 .artifact-placeholder strong {
   color: #9298a8;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
 }
 
 .artifact-placeholder p {
   max-width: 190px;
   margin: 6px 0 0;
   color: #adb1bd;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
   line-height: 1.6;
   text-wrap: pretty;
 }
@@ -3919,7 +3909,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   color: #a1a6b5;
-  font-size: 8px;
+  font-size: calc(var(--wb-font-scale) * 8px);
 }
 
 .context-footnote .pulse-dot {
@@ -3969,12 +3959,12 @@ onUnmounted(() => {
 
 .blog-window-head strong {
   color: #42485b;
-  font-size: 11px;
+  font-size: calc(var(--wb-font-scale) * 11px);
 }
 
 .blog-kicker {
   color: #a0a5b4;
-  font-size: 7px;
+  font-size: calc(var(--wb-font-scale) * 7px);
   font-weight: 700;
   letter-spacing: 0.14em;
 }
@@ -3995,7 +3985,7 @@ onUnmounted(() => {
   display: grid;
   place-items: center;
   font: inherit;
-  font-size: 9px;
+  font-size: calc(var(--wb-font-scale) * 9px);
   text-decoration: none;
   cursor: pointer;
 }
@@ -4152,7 +4142,7 @@ onUnmounted(() => {
   }
 
   .intro-block h1 {
-    font-size: clamp(38px, 12vw, 55px);
+    font-size: clamp(calc(var(--wb-font-scale) * 38px), 12vw, calc(var(--wb-font-scale) * 55px));
   }
 
   .composer {
@@ -4251,16 +4241,16 @@ onUnmounted(() => {
   }
 
   .intro-block h1 {
-    font-size: clamp(64px, 4.6vw, 104px);
+    font-size: clamp(calc(var(--wb-font-scale) * 64px), 4.6vw, calc(var(--wb-font-scale) * 104px));
   }
 
   .intro-block p {
     max-width: 680px;
-    font-size: clamp(12px, 0.72vw, 16px);
+    font-size: clamp(calc(var(--wb-font-scale) * 12px), 0.72vw, calc(var(--wb-font-scale) * 16px));
   }
 
   .section-title-row h2 {
-    font-size: clamp(13px, 0.75vw, 17px);
+    font-size: clamp(calc(var(--wb-font-scale) * 13px), 0.75vw, calc(var(--wb-font-scale) * 17px));
   }
 
   .quick-grid {
@@ -4282,37 +4272,37 @@ onUnmounted(() => {
 
   .nav-item {
     height: clamp(40px, 3.2vh, 52px);
-    font-size: clamp(12px, 0.6vw, 15px);
+    font-size: clamp(calc(var(--wb-font-scale) * 12px), 0.6vw, calc(var(--wb-font-scale) * 15px));
   }
 
   .section-heading,
   .context-section-head {
-    font-size: clamp(10px, 0.55vw, 13px);
+    font-size: clamp(calc(var(--wb-font-scale) * 10px), 0.55vw, calc(var(--wb-font-scale) * 13px));
   }
 
   .recent-copy strong,
   .source-card strong,
   .mode-card strong {
-    font-size: clamp(10px, 0.55vw, 13px);
+    font-size: clamp(calc(var(--wb-font-scale) * 10px), 0.55vw, calc(var(--wb-font-scale) * 13px));
   }
 
   .recent-copy small,
   .source-card small,
   .mode-card small {
-    font-size: clamp(9px, 0.48vw, 11px);
+    font-size: clamp(calc(var(--wb-font-scale) * 9px), 0.48vw, calc(var(--wb-font-scale) * 11px));
   }
 
   .task-empty-copy strong {
-    font-size: clamp(12px, 0.7vw, 16px);
+    font-size: clamp(calc(var(--wb-font-scale) * 12px), 0.7vw, calc(var(--wb-font-scale) * 16px));
   }
 
   .task-empty-copy p,
   .composer textarea {
-    font-size: clamp(11px, 0.65vw, 15px);
+    font-size: clamp(calc(var(--wb-font-scale) * 11px), 0.65vw, calc(var(--wb-font-scale) * 15px));
   }
 
   .composer-meta {
-    font-size: clamp(9px, 0.5vw, 11px);
+    font-size: clamp(calc(var(--wb-font-scale) * 9px), 0.5vw, calc(var(--wb-font-scale) * 11px));
   }
 }
 

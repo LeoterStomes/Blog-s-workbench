@@ -11,4 +11,12 @@ if (/body\.app-chromeless\s*\{[^}]*display\s*:\s*none/i.test(workbenchCss)) {
   throw new Error('Scoped CSS incorrectly hides body.app-chromeless');
 }
 
+if (/\.workbench(?:\s|\[|:)[^{]*\{[^}]*\bzoom\s*:/i.test(workbenchCss)) {
+  throw new Error('Font scaling must not zoom the entire workbench layout');
+}
+
+if (!/font-size\s*:\s*[^;]*var\(--wb-font-scale\)/i.test(workbenchCss)) {
+  throw new Error('Workbench font sizes must use the --wb-font-scale token');
+}
+
 console.log('Workbench CSS scope check passed');

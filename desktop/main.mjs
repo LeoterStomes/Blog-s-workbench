@@ -193,6 +193,8 @@ async function createWindow() {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
+  // Migrate away from the old whole-page zoom setting used by early builds.
+  mainWindow.webContents.setZoomFactor(1);
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (!url.startsWith(localServer.url)) event.preventDefault();
   });
@@ -209,6 +211,7 @@ async function createWindow() {
   });
   mainWindow.once('ready-to-show', () => mainWindow.show());
   await mainWindow.loadURL(`${localServer.url}/workbench`);
+  mainWindow.webContents.setZoomFactor(1);
   await captureQaScreenshot();
 }
 
@@ -334,7 +337,14 @@ async function captureQaScreenshot() {
     articleRows: document.querySelectorAll('.article-stream-item').length,
     articleTotalLabel: document.querySelector('.article-feed-summary')?.textContent?.trim() || '',
     articleError: document.querySelector('.article-feed-view .workspace-notice.error')?.textContent?.trim() || '',
-    textZoomLabel: document.querySelector('.font-zoom span')?.textContent?.trim() || ''
+    textZoomLabel: document.querySelector('.font-zoom span')?.textContent?.trim() || '',
+    fontScale: getComputedStyle(document.querySelector('.workbench')).getPropertyValue('--wb-font-scale').trim(),
+    contextVisible: (() => {
+      const context = document.querySelector('.workbench-context');
+      if (!context) return false;
+      const rect = context.getBoundingClientRect();
+      return rect.right > 0 && rect.left < window.innerWidth && rect.width > 0;
+    })()
   })`, true);
   console.log(`[qa] page=${JSON.stringify(pageState)}`);
   console.log(`[qa] zoomFactor=${mainWindow.webContents.getZoomFactor()}`);
@@ -352,11 +362,6 @@ function registerIpc() {
     node: process.versions.node,
     backendPort,
   }));
-  ipcMain.handle('desktop:set-zoom-factor', (event, requestedFactor) => {
-    const factor = Math.min(1.5, Math.max(0.75, Number(requestedFactor) || 1));
-    BrowserWindow.fromWebContents(event.sender)?.webContents.setZoomFactor(factor);
-    return factor;
-  });
   ipcMain.handle('workspace:get', () => workspaceRoot);
   ipcMain.handle('workspace:choose', () => chooseWorkspace());
   ipcMain.handle('workspace:list', (_event, relativePath = '') => listDirectory(String(relativePath)));
