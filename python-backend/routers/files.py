@@ -56,13 +56,16 @@ AGENT_UPLOAD_DIR = os.path.join(UPLOAD_DIR, "agent")
 os.makedirs(AGENT_UPLOAD_DIR, exist_ok=True)
 
 @router.post("/upload/agent")
-async def upload_agent_file(file: UploadFile = File(...)):
+async def upload_agent_file(
+    file: UploadFile = File(...),
+    user_id: int = Depends(get_current_user_id),
+):
     """Agent 文件上传 — 支持 PDF/DOCX/图片/文本等"""
     content = await file.read()
     if len(content) > MAX_AGENT_FILE_SIZE:
         return {"code": "400", "msg": "文件不超过 20MB", "data": None}
     ext = os.path.splitext(file.filename or "file")[1].lower()
-    safe_name = file.filename or "file"
+    safe_name = os.path.basename(file.filename or "file")
     filename = f"{uuid.uuid4().hex}_{safe_name}"
     filepath = os.path.join(AGENT_UPLOAD_DIR, filename)
     with open(filepath, "wb") as f:

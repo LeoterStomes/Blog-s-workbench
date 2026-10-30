@@ -243,7 +243,11 @@ async function onWidgetFile(e: Event) {
   if (!file) return;
   try {
     const form = new FormData(); form.append('file', file);
-    const r = await fetch('/api/file/upload/agent', { method: 'POST', body: form });
+    const r = await fetch('/api/file/upload/agent', {
+      method: 'POST',
+      headers: { token: getToken() || '' },
+      body: form,
+    });
     const j = await r.json();
     if (j.code==='200') widgetFiles.value.push({ name: j.data.name, url: j.data.url });
   } catch {}

@@ -227,7 +227,11 @@ async function uploadFile(file: File) {
   uploading.value = true;
   try {
     const form = new FormData(); form.append('file', file);
-    const r = await fetch('/api/file/upload/agent', { method: 'POST', body: form });
+    const r = await fetch('/api/file/upload/agent', {
+      method: 'POST',
+      headers: { token: getToken() || '' },
+      body: form,
+    });
     const j = await r.json();
     if (j.code==='200') uploadedFiles.value.push({ name: j.data.name, url: j.data.url });
   } catch {}
@@ -318,6 +322,15 @@ onMounted(() => {
   } else {
     const saved = localStorage.getItem('agentSessionId');
     if (saved) { sessionId.value = saved; localStorage.removeItem('agentSessionId'); }
+  }
+  const pendingTask = localStorage.getItem('workbench:pendingTask');
+  if (pendingTask) {
+    input.value = pendingTask;
+    localStorage.removeItem('workbench:pendingTask');
+    nextTick(() => {
+      textareaRef.value?.focus();
+      autoResize();
+    });
   }
 });
 

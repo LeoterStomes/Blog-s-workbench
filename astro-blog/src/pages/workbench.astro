@@ -1,0 +1,19 @@
+---
+import BaseLayout from '@layouts/BaseLayout.astro';
+import WorkbenchView from '@components/vue/WorkbenchView.vue';
+---
+
+<BaseLayout title="内容工作台">
+  <WorkbenchView client:only="vue" />
+</BaseLayout>
+
+<style is:global>
+  body > footer {
+    display: none !important;
+  }
+
+  body:has(.workbench) button[title="AI 助手"],
+  body:has(.workbench) button[title="搜索文章 (Ctrl+K)"] {
+    display: none !important;
+  }
+</style>
