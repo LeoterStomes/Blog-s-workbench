@@ -194,6 +194,34 @@ async function createWindow() {
   });
   mainWindow.once('ready-to-show', () => mainWindow.show());
   await mainWindow.loadURL(`${localServer.url}/workbench`);
+  await captureQaScreenshot();
+}
+
+async function captureQaScreenshot() {
+  const target = process.env.WORKBENCH_QA_SCREENSHOT;
+  if (app.isPackaged || !target || !mainWindow) return;
+  mainWindow.show();
+  mainWindow.focus();
+  await new Promise(resolveWait => setTimeout(resolveWait, 2500));
+  if (process.env.WORKBENCH_QA_OPEN_BLOG === '1') {
+    await mainWindow.webContents.executeJavaScript(
+      "document.querySelector('.blog-button')?.click()",
+      true,
+    );
+    await new Promise(resolveWait => setTimeout(resolveWait, 1200));
+  }
+  const pageState = await mainWindow.webContents.executeJavaScript(`({
+    title: document.title,
+    text: document.body.innerText.slice(0, 300),
+    workbench: !!document.querySelector('.workbench'),
+    blog: !!document.querySelector('.blog-window'),
+    blogTitle: document.querySelector('.blog-frame')?.contentDocument?.title || ''
+  })`, true);
+  console.log(`[qa] page=${JSON.stringify(pageState)}`);
+  const image = await mainWindow.webContents.capturePage();
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, image.toPNG());
+  if (process.env.WORKBENCH_QA_EXIT === '1') app.quit();
 }
 
 function registerIpc() {

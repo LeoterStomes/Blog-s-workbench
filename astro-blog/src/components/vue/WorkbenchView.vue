@@ -23,6 +23,10 @@
         <button v-if="isDesktop" class="workspace-button" type="button" @click="chooseLocalWorkspace">
           {{ workspaceRoot ? '切换工作区' : '选择工作区' }}
         </button>
+        <button class="blog-button" type="button" @click="blogOpen = true">
+          <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h6" /></svg>
+          博客
+        </button>
         <span class="service-state"><i /> Agent 在线</span>
         <a class="quiet-button" href="/agent">经典助手</a>
         <button class="icon-button context-mobile-only" type="button" aria-label="打开上下文" @click="contextOpen = true">
@@ -177,7 +181,10 @@
                 <span class="eyebrow">TASK {{ sessionId ? `#${sessionId}` : '' }}</span>
                 <h2>{{ taskTitle }}</h2>
               </div>
-              <span class="task-state" :class="statusTone">{{ statusLabel }}</span>
+              <div class="task-status-group">
+                <span class="task-mode">{{ activeMode.label }}</span>
+                <span class="task-state" :class="statusTone">{{ statusLabel }}</span>
+              </div>
             </div>
 
             <div ref="taskFeedRef" class="task-feed" role="log" aria-live="polite">
@@ -306,9 +313,21 @@
           <div class="context-section-head">
             <span>执行方式</span>
           </div>
+          <div class="harness-mode-switch">
+            <button
+              v-for="mode in agentModes"
+              :key="mode.value"
+              type="button"
+              :class="{ active: agentMode === mode.value }"
+              :disabled="isRunning"
+              @click="agentMode = mode.value"
+            >
+              {{ mode.short }}
+            </button>
+          </div>
           <div class="mode-card" :class="{ running: isRunning }">
-            <span class="mode-mark">A</span>
-            <span><strong>Agent 自动执行</strong><small>{{ statusLabel }} · 检索、写作与工具调用</small></span>
+            <span class="mode-mark">{{ activeMode.mark }}</span>
+            <span><strong>{{ activeMode.label }}</strong><small>{{ activeMode.description }}</small></span>
             <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" /></svg>
           </div>
           <div v-if="toolEvents.length" class="tool-mini-list">
@@ -345,6 +364,26 @@
         </div>
       </aside>
     </div>
+
+    <Transition name="blog-sheet">
+      <section v-if="blogOpen" class="blog-overlay" aria-label="博客页面">
+        <div class="blog-window">
+          <header class="blog-window-head">
+            <div>
+              <span class="blog-kicker">EMBEDDED SITE</span>
+              <strong>Ray 的博客</strong>
+            </div>
+            <div class="blog-window-actions">
+              <a :href="blogUrl" target="_blank" rel="noopener">浏览器打开</a>
+              <button type="button" title="关闭博客" @click="blogOpen = false">
+                <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              </button>
+            </div>
+          </header>
+          <iframe :src="blogUrl" title="Ray 的博客" class="blog-frame" />
+        </div>
+      </section>
+    </Transition>
   </div>
 </template>
 
@@ -364,6 +403,7 @@ interface SessionItem {
 
 type TaskStatus = 'idle' | 'connecting' | 'running' | 'done' | 'error' | 'cancelled';
 type TaskEventType = 'user' | 'thinking' | 'tool' | 'text' | 'artifact' | 'error';
+type AgentMode = 'readonly' | 'plan' | 'execute';
 
 interface TaskEvent {
   id: number;
@@ -387,6 +427,8 @@ const attachedFiles = ref<File[]>([]);
 const taskFiles = ref<{ name: string; url: string }[]>([]);
 const navOpen = ref(false);
 const contextOpen = ref(false);
+const blogOpen = ref(false);
+const blogUrl = ref('/');
 const composerRef = ref<HTMLTextAreaElement>();
 const taskFeedRef = ref<HTMLElement>();
 const user = ref(getUser());
@@ -406,6 +448,7 @@ const desktopBridge = (window as any).desktop as {
 const isDesktop = ref(!!desktopBridge?.isElectron);
 const desktopVersion = ref('');
 const workspaceRoot = ref('');
+const agentMode = ref<AgentMode>('plan');
 let eventSequence = 0;
 
 const displayName = computed(() => user.value?.nickname || user.value?.username || '访客');
@@ -431,6 +474,32 @@ const statusTone = computed(() => ({
   running: isRunning.value,
   error: taskStatus.value === 'error',
 }));
+const agentModes = [
+  {
+    value: 'readonly' as AgentMode,
+    short: '只读',
+    label: '只读检索',
+    mark: 'R',
+    description: '查询博客、知识库与文档',
+  },
+  {
+    value: 'plan' as AgentMode,
+    short: '计划',
+    label: '计划分析',
+    mark: 'P',
+    description: '研究任务并产出执行方案',
+  },
+  {
+    value: 'execute' as AgentMode,
+    short: '执行',
+    label: '授权执行',
+    mark: 'E',
+    description: '按账号权限修改与发布',
+  },
+];
+const activeMode = computed(() => (
+  agentModes.find(mode => mode.value === agentMode.value) || agentModes[1]
+));
 const todayLabel = new Intl.DateTimeFormat('zh-CN', {
   month: 'long',
   day: 'numeric',
@@ -469,16 +538,16 @@ const navigation = [
 const quickActions = [
   {
     number: '01',
-    label: '研究选题',
-    description: '从知识库与网络梳理值得写的角度',
-    prompt: '基于我的博客和知识库，调研三个值得写的新选题，并说明受众、切入角度和资料缺口。',
+    label: '知识检索',
+    description: '检索博客文章与导入资料',
+    prompt: '请使用博客知识库检索相关内容，按主题整理关键结论、原文出处和可以直接用于写作的素材。',
     icon: icon('<path d="M11 18a7 7 0 100-14 7 7 0 000 14zm5-2l5 5"/>'),
   },
   {
     number: '02',
-    label: '起草文章',
-    description: '带着资料与约束开始第一版',
-    prompt: '请先梳理现有资料，再帮我起草一篇结构完整、适合个人博客发布的技术文章。',
+    label: '起草与改写',
+    description: '基于已有内容生成新版本',
+    prompt: '请先检索我的博客知识库，再基于已有观点和资料起草或改写一篇适合个人博客发布的文章。',
     icon: icon('<path d="M4 20h4l11-11-4-4L4 16v4zm9-13l4 4M14 4l3-3 4 4-3 3"/>'),
   },
   {
@@ -667,7 +736,11 @@ async function runTask() {
         Accept: 'text/event-stream',
         token,
       },
-      body: JSON.stringify({ sessionId: activeSession, userMessage: fullText }),
+      body: JSON.stringify({
+        sessionId: activeSession,
+        userMessage: fullText,
+        agentMode: agentMode.value,
+      }),
       signal: streamCtrl.value.signal,
       openWhenHidden: true,
       async onopen(response) {
@@ -843,7 +916,10 @@ function handleShortcut(event: KeyboardEvent) {
     event.preventDefault();
     composerRef.value?.focus();
   }
-  if (event.key === 'Escape') closePanels();
+  if (event.key === 'Escape') {
+    closePanels();
+    blogOpen.value = false;
+  }
 }
 
 async function chooseLocalWorkspace() {
@@ -861,6 +937,7 @@ onMounted(async () => {
   loggedIn.value = !!getToken() && !!getUser();
   fetchSessions();
   window.addEventListener('keydown', handleShortcut);
+  blogUrl.value = `${window.location.origin}/`;
   if (isDesktop.value) {
     try {
       const [info, root] = await Promise.all([
@@ -898,10 +975,21 @@ onUnmounted(() => {
   overflow: hidden;
   color: var(--wb-ink);
   isolation: isolate;
+  background:
+    radial-gradient(circle at 82% 2%, rgba(91, 123, 255, 0.09), transparent 28%),
+    linear-gradient(145deg, #eef2f9 0%, #f8f9fc 48%, #eef1f7 100%);
 }
 
 :global(body.app-chromeless) .workbench {
   min-height: 100vh;
+}
+
+:global(body.app-chromeless) {
+  background: #eef2f8 !important;
+}
+
+:global(body.app-chromeless) #bg-overlay {
+  display: none !important;
 }
 
 :global(body.app-chromeless) .workbench-layout {
@@ -995,6 +1083,7 @@ onUnmounted(() => {
 
 .quiet-button,
 .workspace-button,
+.blog-button,
 .icon-button,
 .new-task-button,
 .nav-item,
@@ -1045,6 +1134,35 @@ onUnmounted(() => {
 .workspace-button:hover {
   border-color: rgba(91, 123, 255, 0.35);
   background: rgba(91, 123, 255, 0.11);
+}
+
+.blog-button {
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--wb-line);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.58);
+  color: #666d82;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: 160ms ease;
+}
+
+.blog-button:hover {
+  color: var(--wb-blue-deep);
+  border-color: rgba(91, 123, 255, 0.24);
+}
+
+.blog-button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
 }
 
 .icon-button {
@@ -1621,6 +1739,21 @@ onUnmounted(() => {
 
 .task-heading h2 {
   font-size: 15px;
+}
+
+.task-status-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.task-mode {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(91, 123, 255, 0.07);
+  color: var(--wb-blue-deep);
+  font-size: 8px;
+  font-weight: 650;
 }
 
 .task-state {
@@ -2284,6 +2417,44 @@ onUnmounted(() => {
   padding: 11px;
 }
 
+.harness-mode-switch {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+  margin-bottom: 8px;
+  padding: 3px;
+  border-radius: 9px;
+  background: rgba(225, 229, 239, 0.78);
+}
+
+.harness-mode-switch button {
+  height: 27px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #9298a8;
+  font: inherit;
+  font-size: 8px;
+  cursor: pointer;
+  transition: 150ms ease;
+}
+
+.harness-mode-switch button:hover:not(:disabled) {
+  color: #565d72;
+}
+
+.harness-mode-switch button.active {
+  background: white;
+  color: var(--wb-blue-deep);
+  box-shadow: 0 2px 7px rgba(54, 63, 96, 0.08);
+  font-weight: 650;
+}
+
+.harness-mode-switch button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .mode-card.running {
   border-color: rgba(91, 123, 255, 0.2);
   box-shadow: inset 0 0 0 1px rgba(91, 123, 255, 0.04);
@@ -2481,6 +2652,123 @@ onUnmounted(() => {
   box-shadow: none;
 }
 
+.blog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(21, 25, 42, 0.32);
+  backdrop-filter: blur(7px);
+}
+
+.blog-window {
+  width: min(1180px, calc(100vw - 40px));
+  height: calc(100vh - 40px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 30px 100px rgba(22, 28, 52, 0.32);
+}
+
+.blog-window-head {
+  height: 52px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px 0 17px;
+  border-bottom: 1px solid rgba(102, 111, 145, 0.12);
+  background: rgba(248, 249, 253, 0.96);
+}
+
+.blog-window-head > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.blog-window-head strong {
+  color: #42485b;
+  font-size: 11px;
+}
+
+.blog-kicker {
+  color: #a0a5b4;
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.blog-window-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.blog-window-actions a,
+.blog-window-actions button {
+  height: 30px;
+  border: 1px solid var(--wb-line);
+  border-radius: 8px;
+  background: white;
+  color: #747a8e;
+  display: grid;
+  place-items: center;
+  font: inherit;
+  font-size: 9px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.blog-window-actions a {
+  padding: 0 10px;
+}
+
+.blog-window-actions button {
+  width: 30px;
+}
+
+.blog-window-actions svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+}
+
+.blog-frame {
+  width: 100%;
+  min-height: 0;
+  flex: 1;
+  border: 0;
+  background: white;
+}
+
+.blog-sheet-enter-active,
+.blog-sheet-leave-active {
+  transition: opacity 200ms ease;
+}
+
+.blog-sheet-enter-active .blog-window,
+.blog-sheet-leave-active .blog-window {
+  transition: transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 180ms ease;
+}
+
+.blog-sheet-enter-from,
+.blog-sheet-leave-to {
+  opacity: 0;
+}
+
+.blog-sheet-enter-from .blog-window,
+.blog-sheet-leave-to .blog-window {
+  transform: translateY(10px) scale(0.985);
+  opacity: 0;
+}
+
 .scrim,
 .mobile-only,
 .context-mobile-only {
@@ -2646,6 +2934,14 @@ onUnmounted(() => {
 :global(.dark-mode) .mode-card,
 :global(.dark-mode) .composer {
   background: rgba(34, 37, 52, 0.78);
+}
+
+:global(.dark-mode) .blog-window,
+:global(.dark-mode) .blog-window-head,
+:global(.dark-mode) .blog-window-actions a,
+:global(.dark-mode) .blog-window-actions button {
+  background: #1c1f2e;
+  color: #dfe3ef;
 }
 
 :global(.dark-mode) .quick-card strong,

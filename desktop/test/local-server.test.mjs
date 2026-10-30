@@ -19,7 +19,10 @@ test('serves workbench HTML with a content security policy', async () => {
   try {
     const response = await fetch(`${server.url}/workbench`);
     assert.equal(response.status, 200);
-    assert.match(response.headers.get('content-security-policy') || '', /default-src 'self'/);
+    const csp = response.headers.get('content-security-policy') || '';
+    assert.match(csp, /default-src 'self'/);
+    assert.match(csp, /frame-src 'self'/);
+    assert.match(csp, /frame-ancestors 'self'/);
     assert.equal(await response.text(), '<h1>workbench</h1>');
   } finally {
     await server.close();

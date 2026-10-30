@@ -30,6 +30,62 @@ TOOLS_SCHEMA = [
     {"type":"function","function":{"name":"generate_weekly_video","description":"Generate a video from PPT slides + voiceover. First creates a PPT, then converts each slide to a video frame with TTS narration from speaker notes. Returns download URL for the MP4 video.","parameters":{"type":"object","properties":{"script_json":{"type":"string","description":"JSON: {title, theme, slides: [{type, title, subtitle, bullets, notes}]}. Same format as generate_presentation but notes field is used for TTS voiceover."}},"required":["script_json"]}}},
 ]
 
+AGENT_MODES = {"readonly", "plan", "execute"}
+READ_ONLY_TOOLS = {
+    "use_skill",
+    "search_articles",
+    "get_article",
+    "get_categories",
+    "recommend_articles",
+    "search_web",
+    "read_url",
+    "get_recent_articles",
+    "list_drafts",
+    "read_document",
+    "summarize_url",
+    "summarize_text",
+    "extract_images",
+}
+
+
+def normalize_agent_mode(mode: str | None) -> str:
+    """Keep legacy clients working while failing closed for unknown modes."""
+    if not mode:
+        return "execute"
+    normalized = str(mode).strip().lower()
+    return normalized if normalized in AGENT_MODES else "readonly"
+
+
+def filter_tools_by_mode(tools: list[dict], mode: str) -> list[dict]:
+    normalized = normalize_agent_mode(mode)
+    if normalized == "execute":
+        return tools
+    return [
+        tool for tool in tools
+        if tool.get("function", {}).get("name") in READ_ONLY_TOOLS
+    ]
+
+
+def agent_mode_instruction(mode: str) -> str:
+    normalized = normalize_agent_mode(mode)
+    if normalized == "readonly":
+        return (
+            "\n## Harness 模式：只读\n"
+            "当前只能查询博客、知识库、网页和文档。不得声称已经创建、修改、发布或删除内容；"
+            "如果任务需要写入，请给出计划并提示用户切换到计划或执行模式。"
+        )
+    if normalized == "plan":
+        return (
+            "\n## Harness 模式：计划\n"
+            "先研究和拆解任务，输出可执行方案、风险、验收标准和需要用户确认的决策。"
+            "当前没有写入工具，不要声称已经修改博客或生成交付文件。"
+        )
+    return (
+        "\n## Harness 模式：执行\n"
+        "在用户授权范围内完成任务。执行写操作前确认目标和影响；完成后必须报告产物、"
+        "关键变更以及如何验证。"
+    )
+
 async def execute_tool(name: str, args: dict, db: Session) -> str:
     if name == "use_skill": return _use_skill(args.get("skill_name",""))
     elif name == "search_articles": return _search_articles(db, args.get("query",""), args.get("limit",5))

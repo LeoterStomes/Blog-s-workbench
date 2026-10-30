@@ -84,9 +84,10 @@ export function startWorkbenchServer({ root, backendPort, port = 4410 }) {
         "font-src 'self' data:",
         "connect-src 'self'",
         "media-src 'self' blob: https:",
+        "frame-src 'self'",
         "object-src 'none'",
         "base-uri 'self'",
-        "frame-ancestors 'none'",
+        "frame-ancestors 'self'",
       ].join('; ');
     }
     res.writeHead(200, headers);

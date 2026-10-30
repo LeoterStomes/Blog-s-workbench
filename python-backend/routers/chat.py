@@ -14,7 +14,13 @@ from models import ConsultationSession, ConsultationMessage
 from schemas import ChatSessionStartRequest
 from auth import get_current_user_id, verify_token
 from config import AI_API_KEY, AI_BASE_URL, AI_MODEL
-from services.agent_service import TOOLS_SCHEMA, execute_tool
+from services.agent_service import (
+    TOOLS_SCHEMA,
+    agent_mode_instruction,
+    execute_tool,
+    filter_tools_by_mode,
+    normalize_agent_mode,
+)
 from services.mcp_client import load_mcp_servers, get_mcp_tools, call_mcp_tool
 
 # ── 加载 MCP Server ──
@@ -74,14 +80,19 @@ async def _compress_and_store(session_id: int, user_id: int):
 # ── 权限控制 ──
 WRITE_TOOLS = {"create_draft", "export_file", "update_article", "set_status", "delete_article"}  # 仅 admin(user_type=2) 可用的工具
 
-def _filter_tools_for_user(db: Session, user_id: int) -> list[dict]:
-    """根据用户角色过滤工具列表：admin 全部可用，普通用户移除写工具"""
+def _filter_tools_for_user(db: Session, user_id: int, agent_mode: str = "execute") -> list[dict]:
+    """根据用户角色与 Harness 模式过滤工具；未知模式按只读处理。"""
     from models import User
     user = db.query(User).filter(User.id == user_id).first()
     is_admin = user and user.user_type == 2
+    mode = normalize_agent_mode(agent_mode)
     if is_admin:
-        return TOOLS_SCHEMA  # admin 全部工具
-    return [t for t in TOOLS_SCHEMA if t["function"]["name"] not in WRITE_TOOLS]
+        tools = filter_tools_by_mode(TOOLS_SCHEMA, mode)
+        if mode == "execute":
+            tools = tools + _MCP_TOOLS
+        return tools
+    reader_tools = [t for t in TOOLS_SCHEMA if t["function"]["name"] not in WRITE_TOOLS]
+    return filter_tools_by_mode(reader_tools, mode)
 
 def _now():
     """返回当前本地时间（naive，MySQL 兼容）"""
@@ -240,6 +251,7 @@ async def stream_chat(
             body = json.loads(raw_body.decode("latin-1", errors="replace"))
     session_id = body.get("sessionId", "")
     user_message = body.get("userMessage", "")
+    agent_mode = normalize_agent_mode(body.get("agentMode"))
 
     if not session_id or not user_message:
         return {"code": "400", "msg": "参数缺失", "data": None}
@@ -320,7 +332,16 @@ async def stream_chat(
             _session_matches.clear()
 
     messages = [
-        {"role": "system", "content": sys_prompt + f"\n当前时间：{now_str}" + user_ctx + memory_ctx},
+        {
+            "role": "system",
+            "content": (
+                sys_prompt
+                + f"\n当前时间：{now_str}"
+                + agent_mode_instruction(agent_mode)
+                + user_ctx
+                + memory_ctx
+            ),
+        },
     ]
 
     KEEP_RECENT = 5
@@ -349,6 +370,13 @@ async def stream_chat(
     if tool_history:
         tool_ctx = "上一轮已执行工具的结果（与当前问题相关才使用；不要重复调用已成功的相同工具）：\n" + "\n".join(m.content[:200] for m in tool_history[-8:])
         messages.insert(1, {"role": "system", "content": tool_ctx})
+
+    available_tools = _filter_tools_for_user(db, user_id, agent_mode)
+    allowed_tool_names = {
+        tool["function"]["name"]
+        for tool in available_tools
+        if tool.get("function", {}).get("name")
+    }
 
     async def event_generator():
         full_content = ""
@@ -391,8 +419,7 @@ async def stream_chat(
                     }
                     # 根据用户角色过滤工具
                     if tool_rounds <= MAX_TOOL_ROUNDS:
-                        user_tools = _filter_tools_for_user(db, user_id)
-                        request_json["tools"] = user_tools + _MCP_TOOLS
+                        request_json["tools"] = available_tools
                         request_json["tool_choice"] = "auto"
 
                     async with client.stream(
@@ -501,6 +528,17 @@ async def stream_chat(
                             args_parsed = json.loads(tc["args"])
                         except json.JSONDecodeError:
                             args_parsed = {}
+
+                        if tc["name"] not in allowed_tool_names:
+                            current_messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": json.dumps({
+                                    "error": f"工具 {tc['name']} 在当前 {agent_mode} 模式下不可用",
+                                    "mode": agent_mode,
+                                }, ensure_ascii=False),
+                            })
+                            continue
 
                         # 上限检查：不中断循环，确保每个 tool_call 最终都有对应 tool 响应
                         if cap_reason is None:
