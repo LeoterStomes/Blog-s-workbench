@@ -221,7 +221,7 @@
               @scroll.passive="handleTaskFeedScroll"
             >
               <article
-                v-for="event in taskEvents"
+                v-for="event in visibleTaskEvents"
                 :key="event.id"
                 class="task-event"
                 :class="`event-${event.type}`"
@@ -232,20 +232,8 @@
                 </div>
 
                 <div v-else-if="event.type === 'thinking'" class="event-thinking">
-                  <span class="event-symbol">AI</span>
-                  <div>
-                    <div class="event-label">{{ event.status === 'running' ? '正在分析任务' : '任务分析' }}</div>
-                    <p>{{ event.content }}</p>
-                  </div>
-                </div>
-
-                <div v-else-if="event.type === 'tool'" class="event-tool">
-                  <span class="tool-status-dot" :class="event.status" />
-                  <div class="event-tool-copy">
-                    <div class="event-label">{{ event.displayName }}</div>
-                    <p>{{ toolDescription(event) }}</p>
-                  </div>
-                  <span class="tool-state-text">{{ event.status === 'running' ? '执行中' : '已完成' }}</span>
+                  <div class="event-label">{{ event.status === 'running' ? '正在分析任务' : '任务分析' }}</div>
+                  <p>{{ event.content }}</p>
                 </div>
 
                 <div v-else-if="event.type === 'artifact'" class="event-artifact">
@@ -478,7 +466,9 @@
               placeholder="描述你想完成的内容任务..."
               @input="resizeComposer"
               :disabled="isRunning"
-              @keydown.enter.exact.prevent="runTask"
+              @compositionstart="composerComposing = true"
+              @compositionend="composerComposing = false"
+              @keydown.enter.exact="handleComposerEnter"
             />
             <button v-if="isRunning" class="send-button stop-button" type="button" aria-label="终止任务" @click="stopTask">
               <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
@@ -496,48 +486,67 @@
         </form>
       </main>
 
-      <aside class="workbench-context" :class="{ 'panel-open': contextOpen }">
+      <aside
+        class="workbench-context"
+        :class="{ 'panel-open': contextOpen, 'sources-collapsed': !contextSourcesOpen }"
+      >
         <div class="context-heading">
           <div>
             <span class="eyebrow">WORKSPACE</span>
             <h2>上下文</h2>
           </div>
-          <button class="icon-button mobile-only" type="button" aria-label="关闭上下文" @click="contextOpen = false">
-            <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>
-          </button>
+          <div class="context-heading-actions">
+            <button
+              class="context-fold-button"
+              type="button"
+              :aria-expanded="contextSourcesOpen"
+              :title="contextSourcesOpen ? '收起上下文资料' : '展开上下文资料'"
+              @click="contextSourcesOpen = !contextSourcesOpen"
+            >
+              {{ contextSourcesOpen ? '收起' : '展开' }}
+              <svg viewBox="0 0 24 24" :class="{ collapsed: !contextSourcesOpen }"><path d="M6 9l6 6 6-6" /></svg>
+            </button>
+            <button class="icon-button mobile-only" type="button" aria-label="关闭上下文" @click="contextOpen = false">
+              <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>
+          </div>
         </div>
 
-        <div class="context-tabs">
-          <button class="active" type="button">输出</button>
-          <button type="button">资料</button>
-        </div>
+        <Transition name="context-fold">
+          <div v-if="contextSourcesOpen" class="context-collapsible">
+            <div class="context-tabs">
+              <button class="active" type="button">输出</button>
+              <button type="button">资料</button>
+            </div>
 
-        <section class="context-section">
-          <div class="context-section-head">
-            <span>已连接</span>
-            <small>3 个来源</small>
+            <section class="context-section">
+              <div class="context-section-head">
+                <span>已连接</span>
+                <small>3 个来源</small>
+              </div>
+              <div class="source-card">
+                <span class="source-icon blue"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h6" /></svg></span>
+                <span><strong>博客文章</strong><small>现有内容与分类</small></span>
+                <i />
+              </div>
+              <div class="source-card">
+                <span class="source-icon green"><svg viewBox="0 0 24 24"><path d="M12 3l8 4-8 4-8-4 8-4zm8 8l-8 4-8-4m16 5l-8 4-8-4" /></svg></span>
+                <span><strong>知识库</strong><small>RAG 语义检索</small></span>
+                <i />
+              </div>
+              <div class="source-card">
+                <span class="source-icon amber"><svg viewBox="0 0 24 24"><path d="M8 3h8l4 4v14H4V3h4zm8 0v5h5" /></svg></span>
+                <span><strong>当前资料</strong><small>{{ taskFiles.length ? `${taskFiles.length} 个文件` : '等待添加' }}</small></span>
+                <i :class="{ muted: taskFiles.length === 0 }" />
+              </div>
+              <button v-if="isDesktop" class="source-card local-workspace" type="button" @click="openLocalWorkspace">
+                <span class="source-icon workspace"><svg viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v10H3zM3 7V5h7l2 2" /></svg></span>
+                <span><strong>本地工作区</strong><small>{{ workspaceRoot || '尚未选择' }}</small></span>
+                <svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6" /></svg>
+              </button>
+            </section>
           </div>
-          <div class="source-card">
-            <span class="source-icon blue"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h6" /></svg></span>
-            <span><strong>博客文章</strong><small>现有内容与分类</small></span>
-            <i />
-          </div>
-          <div class="source-card">
-            <span class="source-icon green"><svg viewBox="0 0 24 24"><path d="M12 3l8 4-8 4-8-4 8-4zm8 8l-8 4-8-4m16 5l-8 4-8-4" /></svg></span>
-            <span><strong>知识库</strong><small>RAG 语义检索</small></span>
-            <i />
-          </div>
-          <div class="source-card">
-            <span class="source-icon amber"><svg viewBox="0 0 24 24"><path d="M8 3h8l4 4v14H4V3h4zm8 0v5h5" /></svg></span>
-            <span><strong>当前资料</strong><small>{{ taskFiles.length ? `${taskFiles.length} 个文件` : '等待添加' }}</small></span>
-            <i :class="{ muted: taskFiles.length === 0 }" />
-          </div>
-          <button v-if="isDesktop" class="source-card local-workspace" type="button" @click="openLocalWorkspace">
-            <span class="source-icon workspace"><svg viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v10H3zM3 7V5h7l2 2" /></svg></span>
-            <span><strong>本地工作区</strong><small>{{ workspaceRoot || '尚未选择' }}</small></span>
-            <svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6" /></svg>
-          </button>
-        </section>
+        </Transition>
 
         <section class="context-section model-section">
           <div class="context-section-head">
@@ -681,6 +690,8 @@ const attachedFiles = ref<File[]>([]);
 const taskFiles = ref<{ name: string; url: string }[]>([]);
 const navOpen = ref(false);
 const contextOpen = ref(false);
+const contextSourcesOpen = ref(true);
+const composerComposing = ref(false);
 const blogOpen = ref(false);
 const blogUrl = ref('/');
 const composerRef = ref<HTMLTextAreaElement>();
@@ -738,6 +749,7 @@ const outputText = computed(() => taskEvents.value
   .map(event => event.content || '')
   .join('\n\n')
   .trim());
+const visibleTaskEvents = computed(() => taskEvents.value.filter(event => event.type !== 'tool'));
 const statusLabel = computed(() => ({
   idle: '空闲',
   connecting: '正在连接',
@@ -970,6 +982,12 @@ function usePrompt(prompt: string) {
   });
 }
 
+function handleComposerEnter(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229 || composerComposing.value) return;
+  event.preventDefault();
+  void runTask();
+}
+
 function resizeComposer() {
   if (!composerRef.value) return;
   composerRef.value.style.height = 'auto';
@@ -1012,14 +1030,34 @@ function scrollTaskFeed(force = false) {
   });
 }
 
-function activeThinking() {
-  const last = taskEvents.value[taskEvents.value.length - 1];
-  return last?.type === 'thinking' && last.status === 'running' ? last : null;
+function latestThinking() {
+  return [...taskEvents.value].reverse().find(event => event.type === 'thinking') || null;
 }
 
 function closeThinking(status: 'done' | 'error' = 'done') {
-  const thinking = activeThinking();
+  const thinking = latestThinking();
   if (thinking) thinking.status = status;
+}
+
+function appendThinking(content: string) {
+  if (!content) return;
+  const thinking = latestThinking();
+  if (thinking) {
+    thinking.content = (thinking.content || '') + content;
+    thinking.status = 'running';
+  } else {
+    pushEvent({ type: 'thinking', content, status: 'running' });
+    return;
+  }
+  scrollTaskFeed();
+}
+
+function settleRunningTools(status: 'done' | 'error' = 'done') {
+  taskEvents.value
+    .filter(event => event.type === 'tool' && event.status === 'running')
+    .forEach(event => {
+      event.status = status;
+    });
 }
 
 function toolDescription(event: TaskEvent) {
@@ -1142,14 +1180,10 @@ async function runTask() {
         if (eventName === 'thinking') {
           try {
             const data = JSON.parse(raw);
-            const thinking = activeThinking();
-            if (thinking) thinking.content = (thinking.content || '') + (data.text || '');
-            else pushEvent({ type: 'thinking', content: data.text || '', status: 'running' });
+            appendThinking(data.text || '');
           } catch {
-            const thinking = activeThinking();
-            if (thinking) thinking.content = (thinking.content || '') + raw;
+            appendThinking(raw);
           }
-          scrollTaskFeed();
         } else if (eventName === 'tool_call') {
           closeThinking();
           activeTextId = null;
@@ -1200,12 +1234,14 @@ async function runTask() {
           scrollTaskFeed();
         } else if (eventName === 'done') {
           closeThinking();
+          settleRunningTools('done');
           closedNormally = true;
           taskStatus.value = 'done';
           streamCtrl.value = null;
           fetchSessions();
         } else if (eventName === 'error') {
           closeThinking('error');
+          settleRunningTools('error');
           let message = 'Agent 执行失败';
           try { message = JSON.parse(raw).message || message; } catch { /* ignore */ }
           pushEvent({ type: 'error', content: message });
@@ -1215,6 +1251,7 @@ async function runTask() {
       },
       onclose() {
         closeThinking();
+        settleRunningTools(taskStatus.value === 'error' ? 'error' : 'done');
         if (!closedNormally && taskStatus.value !== 'cancelled' && taskStatus.value !== 'error') {
           taskStatus.value = 'done';
         }
@@ -1228,6 +1265,7 @@ async function runTask() {
   } catch (error) {
     if ((error as any)?.name === 'AbortError') return;
     closeThinking('error');
+    settleRunningTools('error');
     if (taskStatus.value !== 'cancelled') {
       taskStatus.value = 'error';
       pushEvent({
@@ -1242,6 +1280,7 @@ function stopTask() {
   if (!isRunning.value) return;
   taskStatus.value = 'cancelled';
   closeThinking();
+  settleRunningTools('done');
   streamCtrl.value?.abort();
   streamCtrl.value = null;
 }
@@ -2554,6 +2593,7 @@ onUnmounted(() => {
 }
 
 .event-user {
+  width: 100%;
   display: flex;
   justify-content: flex-end;
   align-items: flex-start;
@@ -2561,7 +2601,8 @@ onUnmounted(() => {
 }
 
 .event-user p {
-  max-width: 76%;
+  width: max-content;
+  max-width: min(680px, calc(100% - 35px));
   margin: 0;
   padding: 11px 14px;
   border-radius: 14px 14px 4px 14px;
@@ -2569,8 +2610,9 @@ onUnmounted(() => {
   color: white;
   font-size: calc(var(--wb-font-scale) * 11px);
   line-height: 1.7;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
-  text-wrap: pretty;
+  text-wrap: wrap;
 }
 
 .event-avatar,
@@ -2592,10 +2634,7 @@ onUnmounted(() => {
 }
 
 .event-thinking {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  max-width: 84%;
+  max-width: min(760px, 92%);
   padding: 11px 13px;
   border: 1px solid var(--wb-line);
   border-radius: 12px;
@@ -2614,14 +2653,11 @@ onUnmounted(() => {
 }
 
 .event-thinking p {
-  max-height: 108px;
   margin: 5px 0 0;
-  overflow: hidden;
   color: #8f95a6;
   font-size: calc(var(--wb-font-scale) * 9px);
   line-height: 1.65;
   white-space: pre-wrap;
-  mask-image: linear-gradient(to bottom, black 68%, transparent 100%);
 }
 
 .event-tool {
@@ -3567,12 +3603,76 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   border-left: 1px solid var(--wb-line);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(110, 120, 154, 0.3) transparent;
 }
 
 .context-heading {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.context-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.context-fold-button {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--wb-line);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.5);
+  color: #858c9e;
+  font: inherit;
+  font-size: calc(var(--wb-font-scale) * 8px);
+  cursor: pointer;
+}
+
+.context-fold-button:hover {
+  border-color: rgba(91, 123, 255, 0.22);
+  color: var(--wb-blue-deep);
+}
+
+.context-fold-button svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  transition: transform 180ms ease;
+}
+
+.context-fold-button svg.collapsed {
+  transform: rotate(-90deg);
+}
+
+.context-fold-enter-active,
+.context-fold-leave-active {
+  overflow: hidden;
+  transition: opacity 180ms ease, max-height 220ms ease, transform 220ms ease;
+}
+
+.context-fold-enter-from,
+.context-fold-leave-to {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.context-fold-enter-to,
+.context-fold-leave-from {
+  max-height: 420px;
+}
+
+.workbench-context.sources-collapsed .model-section {
+  margin-top: 16px;
 }
 
 .context-heading h2 {

@@ -394,7 +394,7 @@ async def stream_chat(
         round_tasks: list[asyncio.Task] = []  # 当前轮次的并行任务，新一轮开始前取消
         MAX_SEARCH_CALLS = 8   # 联网搜索上限
         MAX_READ_CALLS = 8     # 读网页上限
-        MAX_TOTAL_TOOLS = 15   # 单轮总工具硬上限
+        MAX_TOTAL_TOOLS = 30   # 单轮总工具硬上限（支持分页遍历完整文章库）
         BATCH_TIMEOUT = 300.0   # 并行批次总超时（需容纳视频生成）
 
         try:
@@ -612,7 +612,7 @@ async def stream_chat(
                             t_timeout = 300.0 if tc["name"] == "generate_weekly_video" else (120.0 if tc["name"] == "generate_presentation" else (30.0 if tc["name"] in long_tools_set else 15.0))
                             # 每个工具调用使用独立 DB Session，避免并发共享请求级 Session
                             tool_db = SessionLocal()
-                            task = asyncio.create_task(execute_tool(tc["name"], args_parsed, tool_db))
+                            task = asyncio.create_task(execute_tool(tc["name"], args_parsed, tool_db, user_id))
                             try:
                                 result = await asyncio.wait_for(task, timeout=t_timeout)
                             except asyncio.TimeoutError:

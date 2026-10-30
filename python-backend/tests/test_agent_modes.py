@@ -14,6 +14,7 @@ class AgentModeTest(unittest.TestCase):
         names = {tool["function"]["name"] for tool in tools}
 
         self.assertIn("search_articles", names)
+        self.assertIn("list_articles", names)
         self.assertIn("read_url", names)
         self.assertNotIn("create_draft", names)
         self.assertNotIn("update_article", names)

@@ -243,6 +243,13 @@ async function captureQaScreenshot() {
     })()`, true);
     await new Promise(resolveWait => setTimeout(resolveWait, 1800));
   }
+  if (process.env.WORKBENCH_QA_COLLAPSE_CONTEXT === '1') {
+    await mainWindow.webContents.executeJavaScript(
+      "document.querySelector('.context-fold-button')?.click()",
+      true,
+    );
+    await new Promise(resolveWait => setTimeout(resolveWait, 500));
+  }
   const qaFontStep = Number(process.env.WORKBENCH_QA_FONT_STEP || 0);
   const qaFontLabel = qaFontStep >= 0 ? '放大字体' : '缩小字体';
   for (let step = 0; step < Math.abs(qaFontStep); step += 1) {
@@ -267,6 +274,13 @@ async function captureQaScreenshot() {
       return tasks.length;
     })()`, true);
     await new Promise(resolveWait => setTimeout(resolveWait, 2500));
+  }
+  if (process.env.WORKBENCH_QA_SCROLL_TASK_TOP === '1') {
+    await mainWindow.webContents.executeJavaScript(
+      "(() => { const feed = document.querySelector('.task-feed'); if (feed) feed.scrollTop = 0; return !!feed; })()",
+      true,
+    );
+    await new Promise(resolveWait => setTimeout(resolveWait, 500));
   }
   const qaArticleId = process.env.WORKBENCH_QA_ARTICLE_ID;
   if (qaArticleId) {
@@ -346,6 +360,10 @@ async function captureQaScreenshot() {
     articleRows: document.querySelectorAll('.article-stream-item').length,
     articleTotalLabel: document.querySelector('.article-feed-summary')?.textContent?.trim() || '',
     articleError: document.querySelector('.article-feed-view .workspace-notice.error')?.textContent?.trim() || '',
+    analysisCards: document.querySelectorAll('.event-thinking').length,
+    toolCards: document.querySelectorAll('.event-tool').length,
+    contextSourcesVisible: !!document.querySelector('.context-collapsible'),
+    contextFoldLabel: document.querySelector('.context-fold-button')?.textContent?.trim() || '',
     textZoomLabel: document.querySelector('.font-zoom span')?.textContent?.trim() || '',
     fontScale: getComputedStyle(document.querySelector('.workbench')).getPropertyValue('--wb-font-scale').trim(),
     contextVisible: (() => {
@@ -365,7 +383,15 @@ async function captureQaScreenshot() {
         overflowY: getComputedStyle(element).overflowY
       } : null;
       return { feed: metrics(feed), workspace: metrics(workspace), main: metrics(main) };
-    })()
+    })(),
+    userBubbles: [...document.querySelectorAll('.event-user p')].slice(0, 8).map(element => ({
+      length: element.textContent.length,
+      width: element.getBoundingClientRect().width,
+      height: element.getBoundingClientRect().height,
+      scrollWidth: element.scrollWidth,
+      whiteSpace: getComputedStyle(element).whiteSpace,
+      textWrap: getComputedStyle(element).textWrap
+    }))
   })`, true);
   console.log(`[qa] page=${JSON.stringify(pageState)}`);
   console.log(`[qa] zoomFactor=${mainWindow.webContents.getZoomFactor()}`);

@@ -9,7 +9,8 @@ from models import KnowledgeArticle, KnowledgeCategory
 TOOLS_SCHEMA = [
     {"type":"function","function":{"name":"use_skill","description":"加载一个技能的完整操作流程与规则。先看 system prompt 里的「可用技能目录」判断需要哪个技能，再调用本工具获取它的详细步骤（workflow + tools + rules）。一次加载一个。","parameters":{"type":"object","properties":{"skill_name":{"type":"string","description":"技能名称，用目录里的名称或文件名，如 'Content Writer' 或 'feishu-article'"}},"required":["skill_name"]}}},
     {"type":"function","function":{"name":"search_articles","description":"Semantic search the entire knowledge base (blog articles + imported reference docs like PDFs). Returns relevant chunks with similarity scores. Use this for any knowledge lookup - one search covers everything.","parameters":{"type":"object","properties":{"query":{"type":"string","description":"Search query in natural language"},"limit":{"type":"integer","description":"Max results, default 5","default":5}},"required":["query"]}}},
-    {"type":"function","function":{"name":"get_article","description":"Get full article content by ID","parameters":{"type":"object","properties":{"article_id":{"type":"string","description":"Article ID (UUID)"}},"required":["article_id"]}}},
+    {"type":"function","function":{"name":"get_article","description":"Read an article by ID. Long content is returned in chunks; continue with next_offset until has_more is false when full text is required.","parameters":{"type":"object","properties":{"article_id":{"type":"string","description":"Article ID (UUID)"},"offset":{"type":"integer","description":"Character offset for long content, default 0","default":0},"max_chars":{"type":"integer","description":"Maximum characters per chunk, default 12000, max 30000","default":12000}},"required":["article_id"]}}},
+    {"type":"function","function":{"name":"list_articles","description":"List every blog article with stable pagination. Use this when the user asks for all articles or when search may miss items. Continue with next_offset until has_more is false. Admin users may include drafts; readers only receive published articles.","parameters":{"type":"object","properties":{"status":{"type":"string","description":"published, draft, or all; draft/all require admin","default":"published"},"offset":{"type":"integer","description":"Start offset, default 0","default":0},"limit":{"type":"integer","description":"Page size, default 50, max 100","default":50}},"required":[]}}},
     {"type":"function","function":{"name":"get_categories","description":"List all blog categories with article counts","parameters":{"type":"object","properties":{}}}},
     {"type":"function","function":{"name":"recommend_articles","description":"Recommend related articles by category","parameters":{"type":"object","properties":{"article_id":{"type":"string","description":"Current article ID"},"limit":{"type":"integer","description":"Max results, default 3","default":3}},"required":["article_id"]}}},
     {"type":"function","function":{"name":"search_web","description":"Web search via DuckDuckGo→Bing→SearXNG multi-engine fallback. No JS required, returns text results.","parameters":{"type":"object","properties":{"query":{"type":"string","description":"Search keyword in natural language, e.g. 'github trending projects this week'"}},"required":["query"]}}},
@@ -35,6 +36,7 @@ READ_ONLY_TOOLS = {
     "use_skill",
     "search_articles",
     "get_article",
+    "list_articles",
     "get_categories",
     "recommend_articles",
     "search_web",
@@ -86,10 +88,11 @@ def agent_mode_instruction(mode: str) -> str:
         "关键变更以及如何验证。"
     )
 
-async def execute_tool(name: str, args: dict, db: Session) -> str:
+async def execute_tool(name: str, args: dict, db: Session, user_id: int | None = None) -> str:
     if name == "use_skill": return _use_skill(args.get("skill_name",""))
     elif name == "search_articles": return _search_articles(db, args.get("query",""), args.get("limit",5))
-    elif name == "get_article": return _get_article(db, args.get("article_id",""))
+    elif name == "get_article": return _get_article(db, args.get("article_id",""), args.get("offset",0), args.get("max_chars",12000))
+    elif name == "list_articles": return _list_articles(db, args, user_id)
     elif name == "get_categories": return _get_categories(db)
     elif name == "recommend_articles": return _recommend_articles(db, args.get("article_id",""), args.get("limit",3))
     elif name == "search_web": return await _search_web(args.get("query",""))
@@ -160,21 +163,91 @@ def _search_articles(db, query, limit=5):
     except Exception:
         pass  # RAG 不可用时降级
 
-    # LIKE 降级（仅博客文章）
-    kw = f"%{query}%"
-    arts = db.query(KnowledgeArticle).filter(KnowledgeArticle.status==1,
-        or_(KnowledgeArticle.title.like(kw),KnowledgeArticle.summary.like(kw),
-            KnowledgeArticle.tags.like(kw))
-    ).order_by(KnowledgeArticle.published_at.desc()).limit(limit).all()
-    return json.dumps({"count":len(arts),"articles":[_a2d(a) for a in arts],"reference_docs":[],"search_type":"keyword"}, ensure_ascii=False)
+    # 语义检索不可用时仍要覆盖分类、正文和标签，避免“有文章却搜不到”。
+    kw = f"%{query.strip()}%"
+    arts = (
+        db.query(KnowledgeArticle)
+        .outerjoin(KnowledgeCategory, KnowledgeArticle.category_id == KnowledgeCategory.id)
+        .filter(
+            KnowledgeArticle.status == 1,
+            or_(
+                KnowledgeArticle.title.like(kw),
+                KnowledgeArticle.summary.like(kw),
+                KnowledgeArticle.tags.like(kw),
+                KnowledgeArticle.content.like(kw),
+                KnowledgeCategory.category_name.like(kw),
+            ),
+        )
+        .order_by(KnowledgeArticle.published_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return json.dumps({
+        "count": len(arts),
+        "articles": [_a2d(a) for a in arts],
+        "reference_docs": [],
+        "search_type": "keyword_fallback",
+        "note": "Semantic index was unavailable; results use category/content keyword matching.",
+    }, ensure_ascii=False)
 
-def _get_article(db, aid):
+def _get_article(db, aid, offset=0, max_chars=12000):
     if not aid: return json.dumps({"error":"Need ID"}, ensure_ascii=False)
     a = db.query(KnowledgeArticle).filter(KnowledgeArticle.id==aid).first()
     if not a: return json.dumps({"error":"Not found"}, ensure_ascii=False)
-    d = _a2d(a); d["content"] = (a.content or "")[:8000]
-    d["content_truncated"] = len(a.content or "") > 8000
+    try:
+        start = max(0, int(offset))
+    except (TypeError, ValueError):
+        start = 0
+    try:
+        limit = min(max(int(max_chars), 1000), 30000)
+    except (TypeError, ValueError):
+        limit = 12000
+    content = a.content or ""
+    end = min(len(content), start + limit)
+    d = _a2d(a)
+    d["content"] = content[start:end]
+    d["content_offset"] = start
+    d["content_length"] = len(content)
+    d["next_offset"] = end if end < len(content) else None
+    d["has_more"] = end < len(content)
+    d["content_truncated"] = end < len(content)
     return json.dumps(d, ensure_ascii=False)
+
+def _list_articles(db, args, user_id=None):
+    try:
+        offset = max(0, int(args.get("offset", 0)))
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        limit = min(max(int(args.get("limit", 50)), 1), 100)
+    except (TypeError, ValueError):
+        limit = 50
+
+    from models import User
+    user = db.query(User).filter(User.id == user_id).first() if user_id else None
+    is_admin = bool(user and user.user_type == 2)
+    requested_status = str(args.get("status") or "published").lower()
+    if requested_status not in {"published", "draft", "all"} or not is_admin:
+        requested_status = "published"
+
+    q = db.query(KnowledgeArticle)
+    if requested_status == "published":
+        q = q.filter(KnowledgeArticle.status == 1)
+    elif requested_status == "draft":
+        q = q.filter(KnowledgeArticle.status == 0)
+    q = q.order_by(KnowledgeArticle.published_at.desc(), KnowledgeArticle.created_at.desc())
+    total = q.count()
+    rows = q.offset(offset).limit(limit).all()
+    next_offset = offset + len(rows)
+    return json.dumps({
+        "count": len(rows),
+        "total": total,
+        "offset": offset,
+        "next_offset": next_offset if next_offset < total else None,
+        "has_more": next_offset < total,
+        "status": requested_status,
+        "articles": [_a2d(a) for a in rows],
+    }, ensure_ascii=False)
 
 def _get_categories(db):
     cats = db.query(KnowledgeCategory).all()
@@ -271,7 +344,10 @@ def _a2d(a):
     return {"id":a.id,"title":a.title,"summary":a.summary,
         "category":a.category.category_name if a.category else "Unknown",
         "tags":a.tags,"read_count":a.read_count or 0,
-        "published_at":a.published_at.isoformat() if a.published_at else "","url":f"/blog/{a.id}"}
+        "status":"published" if a.status == 1 else "draft",
+        "published_at":a.published_at.isoformat() if a.published_at else "",
+        "updated_at":a.updated_at.isoformat() if a.updated_at else "",
+        "url":f"/blog/{a.id}"}
 
 async def _extract_images(url: str) -> str:
     """提取网页中的图片 URL"""
