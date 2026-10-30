@@ -980,22 +980,6 @@ onUnmounted(() => {
     linear-gradient(145deg, #eef2f9 0%, #f8f9fc 48%, #eef1f7 100%);
 }
 
-:global(body.app-chromeless) .workbench {
-  min-height: 100vh;
-}
-
-:global(body.app-chromeless) {
-  background: #eef2f8 !important;
-}
-
-:global(body.app-chromeless) #bg-overlay {
-  display: none !important;
-}
-
-:global(body.app-chromeless) .workbench-layout {
-  height: calc(100vh - 108px);
-}
-
 .workbench-glow {
   position: absolute;
   inset: -25% 10% 45%;
@@ -2909,7 +2893,7 @@ onUnmounted(() => {
   }
 }
 
-:global(.dark-mode) .workbench {
+:global(.dark-mode .workbench) {
   --wb-ink: #eef0f8;
   --wb-muted: #9ca3b8;
   --wb-line: rgba(255, 255, 255, 0.08);
@@ -2917,46 +2901,46 @@ onUnmounted(() => {
   --wb-soft: rgba(27, 30, 44, 0.9);
 }
 
-:global(.dark-mode) .workbench-nav,
-:global(.dark-mode) .workbench-context {
+:global(.dark-mode .workbench-nav),
+:global(.dark-mode .workbench-context) {
   background: rgba(25, 28, 41, 0.92);
 }
 
-:global(.dark-mode) .workbench-main {
+:global(.dark-mode .workbench-main) {
   background:
     linear-gradient(rgba(20, 22, 33, 0.82), rgba(20, 22, 33, 0.94)),
     radial-gradient(circle at 50% 0%, rgba(91, 123, 255, 0.12), transparent 38%);
 }
 
-:global(.dark-mode) .quick-card,
-:global(.dark-mode) .current-task,
-:global(.dark-mode) .source-card,
-:global(.dark-mode) .mode-card,
-:global(.dark-mode) .composer {
+:global(.dark-mode .quick-card),
+:global(.dark-mode .current-task),
+:global(.dark-mode .source-card),
+:global(.dark-mode .mode-card),
+:global(.dark-mode .composer) {
   background: rgba(34, 37, 52, 0.78);
 }
 
-:global(.dark-mode) .blog-window,
-:global(.dark-mode) .blog-window-head,
-:global(.dark-mode) .blog-window-actions a,
-:global(.dark-mode) .blog-window-actions button {
+:global(.dark-mode .blog-window),
+:global(.dark-mode .blog-window-head),
+:global(.dark-mode .blog-window-actions a),
+:global(.dark-mode .blog-window-actions button) {
   background: #1c1f2e;
   color: #dfe3ef;
 }
 
-:global(.dark-mode) .quick-card strong,
-:global(.dark-mode) .task-heading h2,
-:global(.dark-mode) .context-heading h2,
-:global(.dark-mode) .source-card strong,
-:global(.dark-mode) .mode-card strong {
+:global(.dark-mode .quick-card strong),
+:global(.dark-mode .task-heading h2),
+:global(.dark-mode .context-heading h2),
+:global(.dark-mode .source-card strong),
+:global(.dark-mode .mode-card strong) {
   color: #e7eaf3;
 }
 
-:global(.dark-mode) .context-tabs {
+:global(.dark-mode .context-tabs) {
   background: rgba(255, 255, 255, 0.05);
 }
 
-:global(.dark-mode) .context-tabs button.active {
+:global(.dark-mode .context-tabs button.active) {
   background: rgba(255, 255, 255, 0.09);
   color: #e7eaf3;
 }

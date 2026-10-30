@@ -192,6 +192,17 @@ async function createWindow() {
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (!url.startsWith(localServer.url)) event.preventDefault();
   });
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    if (process.env.WORKBENCH_QA_SCREENSHOT) {
+      console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`);
+    }
+  });
+  mainWindow.webContents.on('did-fail-load', (_event, code, description, url) => {
+    console.error(`[renderer] load failed ${code} ${description}: ${url}`);
+  });
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error(`[renderer] process gone: ${JSON.stringify(details)}`);
+  });
   mainWindow.once('ready-to-show', () => mainWindow.show());
   await mainWindow.loadURL(`${localServer.url}/workbench`);
   await captureQaScreenshot();
@@ -214,6 +225,45 @@ async function captureQaScreenshot() {
     title: document.title,
     text: document.body.innerText.slice(0, 300),
     workbench: !!document.querySelector('.workbench'),
+    bodyStyle: (() => {
+      const s = getComputedStyle(document.body);
+      return { display: s.display, visibility: s.visibility, opacity: s.opacity, inline: document.body.getAttribute('style') };
+    })(),
+    bodyStart: document.body.outerHTML.slice(0, 1200),
+    bodyDisplayRules: (() => {
+      const matches = [];
+      const visit = rules => {
+        for (const rule of rules || []) {
+          if (rule.cssRules) visit(rule.cssRules);
+          if (rule.selectorText && rule.style?.display === 'none') {
+            try { if (document.body.matches(rule.selectorText)) matches.push(rule.selectorText); } catch {}
+          }
+        }
+      };
+      for (const sheet of document.styleSheets) {
+        try { visit(sheet.cssRules); } catch {}
+      }
+      return matches;
+    })(),
+    workbenchText: document.querySelector('.workbench')?.innerText.slice(0, 300) || '',
+    workbenchRect: (() => {
+      const el = document.querySelector('.workbench');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      const s = getComputedStyle(el);
+      return { x: r.x, y: r.y, width: r.width, height: r.height, display: s.display, opacity: s.opacity, visibility: s.visibility };
+    })(),
+    ancestors: (() => {
+      let el = document.querySelector('.workbench');
+      const out = [];
+      while (el && out.length < 6) {
+        const r = el.getBoundingClientRect();
+        const s = getComputedStyle(el);
+        out.push({ tag: el.tagName, cls: el.className, width: r.width, height: r.height, display: s.display, position: s.position });
+        el = el.parentElement;
+      }
+      return out;
+    })(),
     blog: !!document.querySelector('.blog-window'),
     blogTitle: document.querySelector('.blog-frame')?.contentDocument?.title || ''
   })`, true);

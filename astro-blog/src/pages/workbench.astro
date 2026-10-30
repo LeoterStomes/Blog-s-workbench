@@ -12,6 +12,30 @@ import WorkbenchView from '@components/vue/WorkbenchView.vue';
     display: none !important;
   }
 
+  body.app-chromeless {
+    display: block !important;
+    min-height: 100vh;
+    background: #eef2f8 !important;
+  }
+
+  body.app-chromeless #bg-overlay {
+    display: none !important;
+  }
+
+  body.app-chromeless .workbench {
+    min-height: 100vh;
+  }
+
+  body.app-chromeless .workbench-layout {
+    height: calc(100vh - 108px);
+  }
+
+  @media (max-width: 860px) {
+    body.app-chromeless .workbench-layout {
+      height: calc(100vh - 84px);
+    }
+  }
+
   body:has(.workbench) button[title="AI 助手"],
   body:has(.workbench) button[title="搜索文章 (Ctrl+K)"] {
     display: none !important;

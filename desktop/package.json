@@ -1,6 +1,6 @@
 {
   "name": "ray-content-workbench-desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Ray 内容工作台桌面客户端",
   "author": "Ray",
@@ -10,7 +10,7 @@
     "start": "electron .",
     "dev": "electron .",
     "test": "node --test test/*.test.mjs",
-    "build:frontend": "npm --prefix ../astro-blog run build",
+    "build:frontend": "npm --prefix ../astro-blog run build && node scripts/verify-web-build.mjs",
     "package:win": "npm run build:frontend && electron-builder --win nsis --x64"
   },
   "devDependencies": {
