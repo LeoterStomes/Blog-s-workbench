@@ -28,7 +28,6 @@
           博客
         </button>
         <span class="service-state"><i /> Agent 在线</span>
-        <a class="quiet-button" href="/agent">经典助手</a>
         <button class="icon-button context-mobile-only" type="button" aria-label="打开上下文" @click="contextOpen = true">
           <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM15 5v14" /></svg>
         </button>
@@ -94,23 +93,26 @@
         </section>
 
         <div class="nav-footer">
-          <a href="/profile" class="account">
+          <button type="button" class="account" @click="selectSection(navigation[3])">
             <span class="account-avatar">{{ userInitial }}</span>
             <span class="account-copy">
               <strong>{{ displayName }}</strong>
               <small>{{ loggedIn ? '个人工作区' : '尚未登录' }}</small>
             </span>
             <svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6" /></svg>
-          </a>
+          </button>
         </div>
       </aside>
 
       <main class="workbench-main">
         <div
           class="main-scroll"
-          :class="{ 'task-active': taskEvents.length > 0, 'idle-mode': taskEvents.length === 0 }"
+          :class="{
+            'task-active': activeSection === 'overview' && taskEvents.length > 0,
+            'idle-mode': activeSection === 'overview' && taskEvents.length === 0,
+          }"
         >
-          <template v-if="taskEvents.length === 0">
+          <template v-if="activeSection === 'overview' && taskEvents.length === 0">
             <section class="intro-block">
               <div class="intro-kicker">
                 <span>{{ todayLabel }}</span>
@@ -178,7 +180,7 @@
             </section>
           </template>
 
-          <section v-else class="task-workspace">
+          <section v-else-if="activeSection === 'overview'" class="task-workspace">
             <div class="task-heading task-heading-sticky">
               <div>
                 <span class="eyebrow">TASK {{ sessionId ? `#${sessionId}` : '' }}</span>
@@ -236,9 +238,158 @@
               </div>
             </div>
           </section>
+
+          <section v-else-if="activeSection === 'articles'" class="workspace-view blog-launcher-view">
+            <div class="workspace-view-heading">
+              <span class="eyebrow">CONNECTED BLOG</span>
+              <h1>博客是工作台的内容来源。</h1>
+              <p>在独立窗口内浏览文章、分类和站点页面，关闭后仍回到当前工作台。</p>
+            </div>
+            <button type="button" class="workspace-primary-action" @click="blogOpen = true">
+              打开内嵌博客
+              <svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+            </button>
+          </section>
+
+          <section v-else-if="activeSection === 'assets'" class="workspace-view assets-view">
+            <div class="workspace-view-toolbar">
+              <div class="workspace-view-heading compact">
+                <span class="eyebrow">ASSET LIBRARY</span>
+                <h1>素材库</h1>
+                <p>只聚合当前账号可用的文件、音乐和博客封面。</p>
+              </div>
+              <label class="library-upload" :class="{ disabled: uploadingAsset }">
+                {{ uploadingAsset ? '上传中...' : '上传素材' }}
+                <input type="file" :disabled="uploadingAsset" @change="uploadAsset" />
+              </label>
+            </div>
+
+            <div v-if="!loggedIn" class="workspace-notice">
+              <strong>登录后查看私人素材库</strong>
+              <a href="/auth/login">去登录</a>
+            </div>
+            <div v-else-if="assetLoading" class="workspace-notice">正在同步素材...</div>
+            <div v-else-if="assetError" class="workspace-notice error">
+              <span>{{ assetError }}</span>
+              <button type="button" @click="fetchAssets(true)">重试</button>
+            </div>
+            <template v-else>
+              <div class="asset-filters">
+                <button
+                  v-for="filter in assetFilters"
+                  :key="filter.value"
+                  type="button"
+                  :class="{ active: assetFilter === filter.value }"
+                  @click="assetFilter = filter.value"
+                >
+                  {{ filter.label }}
+                  <span>{{ filter.count }}</span>
+                </button>
+              </div>
+              <div v-if="filteredAssets.length" class="asset-grid">
+                <article v-for="asset in filteredAssets" :key="asset.id" class="asset-card">
+                  <div class="asset-preview" :class="`kind-${asset.kind}`">
+                    <img v-if="asset.kind === 'image'" :src="asset.url" :alt="asset.name" loading="lazy" />
+                    <audio v-else-if="asset.kind === 'audio'" :src="asset.url" controls preload="none" />
+                    <span v-else class="asset-file-mark">{{ assetKindLabel(asset.kind).slice(0, 1) }}</span>
+                  </div>
+                  <div class="asset-card-body">
+                    <div class="asset-card-title">
+                      <strong>{{ asset.name }}</strong>
+                      <span>{{ assetSourceLabel(asset.source) }}</span>
+                    </div>
+                    <div class="asset-card-meta">
+                      <span>{{ assetKindLabel(asset.kind) }}</span>
+                      <span v-if="asset.size">{{ formatAssetSize(asset.size) }}</span>
+                      <span v-if="asset.created_at">{{ formatAssetDate(asset.created_at) }}</span>
+                    </div>
+                    <div class="asset-card-actions">
+                      <button type="button" @click="useAssetInTask(asset)">引用到任务</button>
+                      <a :href="asset.url" target="_blank">打开</a>
+                    </div>
+                  </div>
+                </article>
+              </div>
+              <div v-else class="workspace-notice">当前分类还没有素材。</div>
+            </template>
+          </section>
+
+          <section v-else-if="activeSection === 'profile'" class="workspace-view settings-view">
+            <div class="workspace-view-heading compact">
+              <span class="eyebrow">WORKBENCH SETTINGS</span>
+              <h1>个人设置</h1>
+              <p>账号、工作区和 Harness 默认行为都在这里配置。</p>
+            </div>
+            <div v-if="!loggedIn" class="workspace-notice">
+              <strong>请先登录</strong>
+              <a href="/auth/login">去登录</a>
+            </div>
+            <div v-else class="settings-grid">
+              <form class="settings-card" @submit.prevent="saveSettings">
+                <div class="settings-card-head">
+                  <span>账号资料</span>
+                  <small>{{ user?.username }}</small>
+                </div>
+                <label>昵称<input v-model="settingsForm.nickname" type="text" /></label>
+                <label>邮箱<input v-model="settingsForm.email" type="email" /></label>
+                <label>手机号<input v-model="settingsForm.phone" type="text" /></label>
+                <label>个人简介<input v-model="settingsForm.bio" type="text" maxlength="100" /></label>
+                <div class="settings-card-foot">
+                  <span>{{ settingsMessage }}</span>
+                  <button type="submit" :disabled="settingsSaving">{{ settingsSaving ? '保存中...' : '保存资料' }}</button>
+                </div>
+              </form>
+
+              <section class="settings-card">
+                <div class="settings-card-head">
+                  <span>默认 Harness</span>
+                  <small>新任务默认使用</small>
+                </div>
+                <div class="settings-mode-list">
+                  <button
+                    v-for="mode in agentModes"
+                    :key="mode.value"
+                    type="button"
+                    :class="{ active: defaultAgentMode === mode.value }"
+                    @click="setDefaultAgentMode(mode.value)"
+                  >
+                    <strong>{{ mode.label }}</strong>
+                    <small>{{ mode.description }}</small>
+                  </button>
+                </div>
+              </section>
+
+              <section class="settings-card">
+                <div class="settings-card-head">
+                  <span>本地工作区</span>
+                  <small>{{ isDesktop ? '桌面版' : '浏览器模式' }}</small>
+                </div>
+                <p class="settings-path">{{ workspaceRoot || '当前环境没有本地工作区' }}</p>
+                <div v-if="isDesktop" class="settings-inline-actions">
+                  <button type="button" @click="chooseLocalWorkspace">切换目录</button>
+                  <button type="button" @click="openLocalWorkspace">打开目录</button>
+                </div>
+              </section>
+
+              <section class="settings-card">
+                <div class="settings-card-head">
+                  <span>内容来源</span>
+                  <small>自动连接</small>
+                </div>
+                <div class="settings-source">
+                  <span class="source-dot" />
+                  <span><strong>博客文章</strong><small>公开文章与分类</small></span>
+                </div>
+                <div class="settings-source">
+                  <span class="source-dot" />
+                  <span><strong>知识库</strong><small>RAG 语义检索</small></span>
+                </div>
+              </section>
+            </div>
+          </section>
         </div>
 
-        <form class="composer" @submit.prevent="runTask">
+        <form v-if="activeSection === 'overview'" class="composer" @submit.prevent="runTask">
           <div class="composer-main">
             <label class="attach-button" title="添加资料">
               <svg viewBox="0 0 24 24"><path d="M15 7l-6.6 6.6a2 2 0 102.8 2.8L18 9.6a4 4 0 00-5.7-5.7l-6.5 6.5a6 6 0 108.5 8.5L20 13" /></svg>
@@ -392,7 +543,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
-import { getToken, getUser } from '@lib/auth';
+import { getToken, getUser, setUser } from '@lib/auth';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
@@ -420,6 +571,19 @@ interface TaskEvent {
   url?: string;
   format?: string;
 }
+
+interface AssetItem {
+  id: string;
+  name: string;
+  url: string;
+  kind: 'image' | 'audio' | 'document' | 'file';
+  source: 'profile' | 'music' | 'agent_upload' | 'article';
+  mime_type?: string;
+  size: number;
+  created_at: string;
+}
+
+type AssetFilter = 'all' | AssetItem['kind'];
 
 const sessions = ref<SessionItem[]>([]);
 const loadingSessions = ref(false);
@@ -452,6 +616,20 @@ const isDesktop = ref(!!desktopBridge?.isElectron);
 const desktopVersion = ref('');
 const workspaceRoot = ref('');
 const agentMode = ref<AgentMode>('plan');
+const defaultAgentMode = ref<AgentMode>('plan');
+const assets = ref<AssetItem[]>([]);
+const assetFilter = ref<AssetFilter>('all');
+const assetLoading = ref(false);
+const assetError = ref('');
+const uploadingAsset = ref(false);
+const settingsSaving = ref(false);
+const settingsMessage = ref('');
+const settingsForm = ref({
+  nickname: '',
+  email: '',
+  phone: '',
+  bio: '',
+});
 let eventSequence = 0;
 
 const displayName = computed(() => user.value?.nickname || user.value?.username || '访客');
@@ -503,6 +681,23 @@ const agentModes = [
 const activeMode = computed(() => (
   agentModes.find(mode => mode.value === agentMode.value) || agentModes[1]
 ));
+const filteredAssets = computed(() => {
+  if (assetFilter.value === 'all') return assets.value;
+  return assets.value.filter(asset => asset.kind === assetFilter.value);
+});
+const assetFilters = computed(() => {
+  const counts = assets.value.reduce<Record<string, number>>((result, asset) => {
+    result[asset.kind] = (result[asset.kind] || 0) + 1;
+    return result;
+  }, {});
+  return [
+    { value: 'all' as AssetFilter, label: '全部', count: assets.value.length },
+    { value: 'image' as AssetFilter, label: '图片', count: counts.image || 0 },
+    { value: 'audio' as AssetFilter, label: '音频', count: counts.audio || 0 },
+    { value: 'document' as AssetFilter, label: '文档', count: counts.document || 0 },
+    { value: 'file' as AssetFilter, label: '其他', count: counts.file || 0 },
+  ];
+});
 const todayLabel = new Intl.DateTimeFormat('zh-CN', {
   month: 'long',
   day: 'numeric',
@@ -570,9 +765,13 @@ const quickActions = [
 ];
 
 function selectSection(item: { key: string; href: string }) {
-  activeSection.value = item.key;
-  if (item.href !== '/workbench') window.location.href = item.href;
   navOpen.value = false;
+  activeSection.value = item.key;
+  if (item.key === 'articles') {
+    blogOpen.value = true;
+  } else if (item.key === 'assets') {
+    fetchAssets();
+  }
 }
 
 function startNewTask() {
@@ -583,6 +782,8 @@ function startNewTask() {
   taskFiles.value = [];
   taskTitle.value = '';
   taskStatus.value = 'idle';
+  activeSection.value = 'overview';
+  agentMode.value = defaultAgentMode.value;
   draft.value = '';
   attachedFiles.value = [];
   navOpen.value = false;
@@ -894,6 +1095,126 @@ async function loadTaskSession(id: string) {
   }
 }
 
+async function fetchAssets(force = false) {
+  if (!loggedIn.value) return;
+  if (!force && assets.value.length > 0) return;
+  assetLoading.value = true;
+  assetError.value = '';
+  try {
+    const response = await fetch('/api/workbench/assets', {
+      headers: { token: getToken() || '' },
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.code !== '200') {
+      throw new Error(payload.detail || payload.msg || '素材库加载失败');
+    }
+    assets.value = payload.data || [];
+  } catch (error) {
+    assetError.value = error instanceof Error ? error.message : '素材库加载失败';
+  } finally {
+    assetLoading.value = false;
+  }
+}
+
+async function uploadAsset(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  uploadingAsset.value = true;
+  assetError.value = '';
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const response = await fetch('/api/file/upload/agent', {
+      method: 'POST',
+      headers: { token: getToken() || '' },
+      body: form,
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.code !== '200') {
+      throw new Error(payload.detail || payload.msg || '素材上传失败');
+    }
+    await fetchAssets(true);
+  } catch (error) {
+    assetError.value = error instanceof Error ? error.message : '素材上传失败';
+  } finally {
+    uploadingAsset.value = false;
+    input.value = '';
+  }
+}
+
+function useAssetInTask(asset: AssetItem) {
+  activeSection.value = 'overview';
+  draft.value = `请在工作区任务中参考以下素材：${asset.name}\n${window.location.origin}${asset.url}`;
+  nextTick(() => {
+    composerRef.value?.focus();
+    resizeComposer();
+  });
+}
+
+function assetKindLabel(kind: AssetItem['kind']) {
+  return {
+    image: '图片',
+    audio: '音频',
+    document: '文档',
+    file: '文件',
+  }[kind];
+}
+
+function assetSourceLabel(source: AssetItem['source']) {
+  return {
+    profile: '个人资料',
+    music: '私人音乐',
+    agent_upload: '我的上传',
+    article: '博客封面',
+  }[source];
+}
+
+function formatAssetSize(size: number) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatAssetDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? ''
+    : new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric' }).format(date);
+}
+
+function setDefaultAgentMode(mode: AgentMode) {
+  defaultAgentMode.value = mode;
+  agentMode.value = mode;
+  localStorage.setItem('workbench:defaultAgentMode', mode);
+}
+
+async function saveSettings() {
+  settingsSaving.value = true;
+  settingsMessage.value = '';
+  try {
+    const response = await fetch('/api/user/profile', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        token: getToken() || '',
+      },
+      body: JSON.stringify(settingsForm.value),
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.code !== '200') {
+      throw new Error(payload.detail || payload.msg || '保存失败');
+    }
+    setUser({ ...getUser()!, ...payload.data });
+    user.value = getUser();
+    settingsMessage.value = '已保存';
+  } catch (error) {
+    settingsMessage.value = error instanceof Error ? error.message : '保存失败';
+  } finally {
+    settingsSaving.value = false;
+  }
+}
+
 function renderMarkdown(content: string) {
   return DOMPurify.sanitize(marked.parse(content || '', { breaks: true }) as string);
 }
@@ -925,6 +1246,18 @@ function handleShortcut(event: KeyboardEvent) {
   }
 }
 
+async function handleHostMessage(event: MessageEvent) {
+  if (event.origin !== window.location.origin) return;
+  if (event.data?.type !== 'ray:open-workbench') return;
+  blogOpen.value = false;
+  activeSection.value = 'overview';
+  if (event.data.sessionId) {
+    await loadTaskSession(String(event.data.sessionId));
+  } else {
+    nextTick(() => composerRef.value?.focus());
+  }
+}
+
 async function chooseLocalWorkspace() {
   const selected = await desktopBridge?.chooseWorkspace?.();
   if (selected) workspaceRoot.value = selected;
@@ -938,8 +1271,20 @@ onMounted(async () => {
   const footer = document.querySelector('body > footer');
   if (footer) (footer as HTMLElement).style.display = 'none';
   loggedIn.value = !!getToken() && !!getUser();
+  const savedMode = localStorage.getItem('workbench:defaultAgentMode') as AgentMode | null;
+  if (savedMode && ['readonly', 'plan', 'execute'].includes(savedMode)) {
+    defaultAgentMode.value = savedMode;
+    agentMode.value = savedMode;
+  }
+  settingsForm.value = {
+    nickname: user.value?.nickname || '',
+    email: user.value?.email || '',
+    phone: user.value?.phone || '',
+    bio: user.value?.bio || '',
+  };
   fetchSessions();
   window.addEventListener('keydown', handleShortcut);
+  window.addEventListener('message', handleHostMessage);
   blogUrl.value = `${window.location.origin}/`;
   if (isDesktop.value) {
     try {
@@ -959,6 +1304,7 @@ onUnmounted(() => {
   const footer = document.querySelector('body > footer');
   if (footer) (footer as HTMLElement).style.display = '';
   window.removeEventListener('keydown', handleShortcut);
+  window.removeEventListener('message', handleHostMessage);
 });
 </script>
 
@@ -1475,6 +1821,9 @@ onUnmounted(() => {
 }
 
 .account {
+  width: 100%;
+  border: 0;
+  background: transparent;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -1482,6 +1831,8 @@ onUnmounted(() => {
   border-radius: 10px;
   color: inherit;
   text-decoration: none;
+  text-align: left;
+  cursor: pointer;
 }
 
 .account-avatar {
@@ -2155,6 +2506,447 @@ onUnmounted(() => {
 @keyframes stream-dot {
   0%, 100% { opacity: 0.3; transform: translateY(0); }
   50% { opacity: 1; transform: translateY(-2px); }
+}
+
+.workspace-view {
+  min-height: 100%;
+  animation: event-enter 240ms ease-out both;
+}
+
+.workspace-view-heading h1 {
+  margin: 10px 0 12px;
+  color: var(--wb-ink);
+  font-size: clamp(30px, 3vw, 54px);
+  font-weight: 650;
+  line-height: 1.05;
+  letter-spacing: -0.045em;
+}
+
+.workspace-view-heading p {
+  max-width: 620px;
+  margin: 0;
+  color: #858b9d;
+  font-size: clamp(11px, 0.7vw, 15px);
+  line-height: 1.75;
+  text-wrap: pretty;
+}
+
+.workspace-view-heading.compact h1 {
+  font-size: clamp(28px, 2.3vw, 42px);
+}
+
+.blog-launcher-view {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.workspace-primary-action {
+  margin-top: 26px;
+  height: 42px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--wb-blue);
+  color: white;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(91, 123, 255, 0.22);
+}
+
+.workspace-primary-action svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+}
+
+.workspace-view-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.library-upload {
+  height: 38px;
+  padding: 0 14px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  background: var(--wb-ink);
+  color: white;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.library-upload.disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.library-upload input {
+  display: none;
+}
+
+.workspace-notice {
+  min-height: 150px;
+  margin-top: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px dashed #d8dce6;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.45);
+  color: #9298a8;
+  font-size: 11px;
+}
+
+.workspace-notice a,
+.workspace-notice button {
+  border: 0;
+  background: transparent;
+  color: var(--wb-blue-deep);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.workspace-notice.error {
+  color: #d33b3b;
+}
+
+.asset-filters {
+  margin: 22px 0 12px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.asset-filters button {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--wb-line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.58);
+  color: #868c9e;
+  font: inherit;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.asset-filters button span {
+  margin-left: 4px;
+  color: #a8adba;
+}
+
+.asset-filters button.active {
+  border-color: rgba(91, 123, 255, 0.22);
+  background: rgba(91, 123, 255, 0.08);
+  color: var(--wb-blue-deep);
+}
+
+.asset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.asset-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--wb-line);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.7);
+  transition: transform 170ms ease, box-shadow 170ms ease;
+}
+
+.asset-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(52, 61, 98, 0.08);
+}
+
+.asset-preview {
+  height: 122px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background:
+    linear-gradient(145deg, rgba(91, 123, 255, 0.08), rgba(91, 123, 255, 0.025)),
+    #f5f7fb;
+}
+
+.asset-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.asset-preview audio {
+  width: calc(100% - 24px);
+  height: 34px;
+}
+
+.asset-file-mark {
+  width: 46px;
+  height: 52px;
+  border: 1px solid rgba(91, 123, 255, 0.16);
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--wb-blue-deep);
+  font-size: 18px;
+  font-weight: 750;
+}
+
+.asset-card-body {
+  padding: 11px;
+}
+
+.asset-card-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.asset-card-title strong {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: #50566b;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-card-title span {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(91, 123, 255, 0.07);
+  color: var(--wb-blue-deep);
+  font-size: 7px;
+}
+
+.asset-card-meta {
+  margin-top: 6px;
+  display: flex;
+  gap: 8px;
+  color: #a0a5b3;
+  font-size: 8px;
+}
+
+.asset-card-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 6px;
+}
+
+.asset-card-actions button,
+.asset-card-actions a {
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--wb-line);
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: #71788c;
+  font: inherit;
+  font-size: 8px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.asset-card-actions button:hover,
+.asset-card-actions a:hover {
+  border-color: rgba(91, 123, 255, 0.22);
+  color: var(--wb-blue-deep);
+}
+
+.settings-grid {
+  margin-top: 24px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-card {
+  padding: 18px;
+  border: 1px solid var(--wb-line);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.settings-card-head {
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-card-head span {
+  color: #4d5367;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.settings-card-head small {
+  color: #a0a5b3;
+  font-size: 8px;
+}
+
+.settings-card label {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  color: #8a90a1;
+  font-size: 9px;
+}
+
+.settings-card input {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--wb-line);
+  border-radius: 8px;
+  outline: none;
+  background: rgba(255, 255, 255, 0.72);
+  color: #4f566a;
+  font: inherit;
+  font-size: 10px;
+}
+
+.settings-card input:focus {
+  border-color: rgba(91, 123, 255, 0.35);
+  box-shadow: 0 0 0 3px rgba(91, 123, 255, 0.07);
+}
+
+.settings-card-foot {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-card-foot span {
+  color: #789181;
+  font-size: 8px;
+}
+
+.settings-card-foot button,
+.settings-inline-actions button {
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--wb-ink);
+  color: white;
+  font: inherit;
+  font-size: 8px;
+  cursor: pointer;
+}
+
+.settings-mode-list {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-mode-list button {
+  padding: 10px;
+  border: 1px solid var(--wb-line);
+  border-radius: 9px;
+  background: transparent;
+  display: grid;
+  gap: 3px;
+  color: #6f7689;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-mode-list button strong {
+  font-size: 9px;
+}
+
+.settings-mode-list button small {
+  color: #a0a5b3;
+  font-size: 8px;
+}
+
+.settings-mode-list button.active {
+  border-color: rgba(91, 123, 255, 0.25);
+  background: rgba(91, 123, 255, 0.06);
+  color: var(--wb-blue-deep);
+}
+
+.settings-path {
+  min-height: 54px;
+  margin: 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(238, 241, 247, 0.75);
+  color: #747b8e;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 8px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+.settings-inline-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 6px;
+}
+
+.settings-inline-actions button:last-child {
+  background: transparent;
+  border: 1px solid var(--wb-line);
+  color: #71788c;
+}
+
+.settings-source {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--wb-line);
+}
+
+.settings-source:last-child {
+  border-bottom: 0;
+}
+
+.source-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--wb-green);
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.09);
+}
+
+.settings-source > span:last-child {
+  display: grid;
+  gap: 2px;
+}
+
+.settings-source strong {
+  color: #565c70;
+  font-size: 9px;
+}
+
+.settings-source small {
+  color: #a0a5b3;
+  font-size: 8px;
 }
 
 .composer {
@@ -2890,6 +3682,15 @@ onUnmounted(() => {
 
   .composer {
     margin: 0 14px 14px;
+  }
+
+  .workspace-view-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .settings-grid {
+    grid-template-columns: 1fr;
   }
 }
 

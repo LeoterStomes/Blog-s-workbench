@@ -336,10 +336,16 @@ function goLogin() {
 }
 
 function expandToAgent() {
-  if (sessionId.value) {
-    localStorage.setItem('agentSessionId', sessionId.value);
+  const activeSession = sessionId.value || null;
+  if (activeSession) localStorage.setItem('agentSessionId', activeSession);
+  if (window.parent !== window) {
+    window.parent.postMessage(
+      { type: 'ray:open-workbench', sessionId: activeSession },
+      window.location.origin,
+    );
+    return;
   }
-  window.open('/agent', '_blank');
+  window.location.href = '/workbench';
 }
 
 function openChat() {

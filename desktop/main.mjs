@@ -167,7 +167,11 @@ async function chooseWorkspace() {
 
 async function createWindow() {
   await ensureBackend();
-  localServer = await startWorkbenchServer({ root: frontendRoot, backendPort, port: sitePort });
+  localServer = await startWorkbenchServer({
+    root: frontendRoot,
+    backendPort,
+    port: sitePort,
+  });
 
   mainWindow = new BrowserWindow({
     width: 1480,
@@ -225,6 +229,28 @@ async function captureQaScreenshot() {
     );
     await new Promise(resolveWait => setTimeout(resolveWait, 1200));
   }
+  const qaSection = process.env.WORKBENCH_QA_SECTION;
+  if (qaSection) {
+    await mainWindow.webContents.executeJavaScript(`(() => {
+      const item = [...document.querySelectorAll('.nav-item')]
+        .find(element => element.textContent.trim().startsWith(${JSON.stringify(qaSection)}));
+      if (!item) return false;
+      item.click();
+      return true;
+    })()`, true);
+    await new Promise(resolveWait => setTimeout(resolveWait, 1800));
+  }
+  const qaArticleId = process.env.WORKBENCH_QA_ARTICLE_ID;
+  if (qaArticleId) {
+    const articleUrl = `${localServer.url}/blog/${encodeURIComponent(qaArticleId)}`;
+    await mainWindow.webContents.executeJavaScript(`(() => {
+      const frame = document.querySelector('.blog-frame');
+      if (!frame) return false;
+      frame.src = ${JSON.stringify(articleUrl)};
+      return true;
+    })()`, true);
+    await new Promise(resolveWait => setTimeout(resolveWait, 2500));
+  }
   const pageState = await mainWindow.webContents.executeJavaScript(`({
     title: document.title,
     text: document.body.innerText.slice(0, 300),
@@ -263,7 +289,10 @@ async function captureQaScreenshot() {
       const r = el.getBoundingClientRect();
       return { width: r.width, height: r.height };
     })(),
-    quickColumns: getComputedStyle(document.querySelector('.quick-grid')).gridTemplateColumns,
+    quickColumns: (() => {
+      const quickGrid = document.querySelector('.quick-grid');
+      return quickGrid ? getComputedStyle(quickGrid).gridTemplateColumns : '';
+    })(),
     ancestors: (() => {
       let el = document.querySelector('.workbench');
       const out = [];
@@ -276,7 +305,16 @@ async function captureQaScreenshot() {
       return out;
     })(),
     blog: !!document.querySelector('.blog-window'),
-    blogTitle: document.querySelector('.blog-frame')?.contentDocument?.title || ''
+    blogTitle: document.querySelector('.blog-frame')?.contentDocument?.title || '',
+    blogPath: document.querySelector('.blog-frame')?.contentWindow?.location?.pathname || '',
+    blogArticleHeading:
+      document.querySelector('.blog-frame')?.contentDocument?.querySelector('.article-hero h1')?.textContent?.trim() || '',
+    blogNotFound:
+      (document.querySelector('.blog-frame')?.contentDocument?.body?.innerText || '').includes('文章不存在'),
+    activeSection: document.querySelector('.nav-item.active')?.textContent?.trim() || '',
+    assetCards: document.querySelectorAll('.asset-card').length,
+    assetNotice: document.querySelector('.assets-view .workspace-notice')?.textContent?.trim() || '',
+    settingsVisible: !!document.querySelector('.settings-view')
   })`, true);
   console.log(`[qa] page=${JSON.stringify(pageState)}`);
   const image = await mainWindow.webContents.capturePage();

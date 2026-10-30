@@ -8,3 +8,4 @@ from .music import Music
 from .project import Project
 from .visitor import VisitorLog
 from .comment import Comment
+from .asset import UserAsset

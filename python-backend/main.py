@@ -11,7 +11,7 @@ from schema_migrations import migrate_music_ownership
 migrate_music_ownership(engine)
 
 from services.visitor_service import stats as visitor_stats_func, ping as visitor_ping_func
-from routers import users, articles, categories, favorites, chat, files, announcements, music, projects, captcha, email, site_settings, comments, rag, api_manager
+from routers import users, articles, categories, favorites, chat, files, announcements, music, projects, captcha, email, site_settings, comments, rag, api_manager, workbench
 
 _ALLOWED_ORIGINS = os.getenv(
     "CORS_ORIGINS",
@@ -45,6 +45,7 @@ app.include_router(site_settings.router)
 app.include_router(comments.router)
 app.include_router(rag.router)
 app.include_router(api_manager.router)
+app.include_router(workbench.router)
 
 uploads_dir = os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(uploads_dir, exist_ok=True)

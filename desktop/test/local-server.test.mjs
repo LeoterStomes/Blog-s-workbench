@@ -46,3 +46,23 @@ test('rejects missing static files', async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('serves the static article shell for blog detail routes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ray-workbench-'));
+  await mkdir(join(root, 'article'));
+  await writeFile(join(root, 'article', 'index.html'), '<h1>article shell</h1>', 'utf8');
+  const server = await startWorkbenchServer({
+    root,
+    backendPort: 9,
+    port: 0,
+  });
+
+  try {
+    const response = await fetch(`${server.url}/blog/article-id`);
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), '<h1>article shell</h1>');
+  } finally {
+    await server.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

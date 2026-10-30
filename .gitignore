@@ -89,6 +89,9 @@ python-backend/logs/
 # Electron runtime cache
 desktop/.electron-cache/
 desktop/release/
+desktop/runtime/
+desktop/.package-test/
+desktop/.qa-userdata/
 
 #忽视指定 exe 文件
 /ffmpeg.exe

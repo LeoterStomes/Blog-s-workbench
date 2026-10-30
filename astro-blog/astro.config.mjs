@@ -17,6 +17,7 @@ export default defineConfig({
   devToolbar: { enabled: false },
   adapter: node({ mode: 'standalone' }),
   server: {
+    host: '127.0.0.1',
     port: frontendPort,
   },
   vite: {

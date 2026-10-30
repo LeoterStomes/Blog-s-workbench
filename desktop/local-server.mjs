@@ -64,7 +64,8 @@ export function startWorkbenchServer({ root, backendPort, port = 4410 }) {
       return;
     }
 
-    const filePath = resolveStaticFile(root, pathname);
+    const staticPath = /^\/blog\/[^/]+\/?$/.test(pathname) ? '/article' : pathname;
+    const filePath = resolveStaticFile(root, staticPath);
     if (!filePath || !existsSync(filePath) || !statSync(filePath).isFile()) {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('Not found');
