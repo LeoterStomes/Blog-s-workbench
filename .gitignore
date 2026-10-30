@@ -82,6 +82,13 @@ python-backend/logs/
 ~*
 .#*
 
+# Local reference archive
+/luanyujia-workbench-main.zip
+/reference-luanyujia/
+
+# Electron runtime cache
+desktop/.electron-cache/
+
 #忽视指定 exe 文件
 /ffmpeg.exe
 

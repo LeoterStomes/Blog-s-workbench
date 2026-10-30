@@ -7,6 +7,9 @@
         <button class="icon-button mobile-only" type="button" aria-label="打开导航" @click="navOpen = true">
           <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
         </button>
+        <a class="icon-button home-button" href="/" title="返回博客" aria-label="返回博客">
+          <svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9h-6v-6h-4v6H4z" /></svg>
+        </a>
         <div class="breadcrumb">
           <span class="breadcrumb-mark">R</span>
           <span>Ray Studio</span>
@@ -16,6 +19,10 @@
       </div>
 
       <div class="topbar-actions">
+        <span v-if="isDesktop" class="desktop-state">桌面版 {{ desktopVersion }}</span>
+        <button v-if="isDesktop" class="workspace-button" type="button" @click="chooseLocalWorkspace">
+          {{ workspaceRoot ? '切换工作区' : '选择工作区' }}
+        </button>
         <span class="service-state"><i /> Agent 在线</span>
         <a class="quiet-button" href="/agent">经典助手</a>
         <button class="icon-button context-mobile-only" type="button" aria-label="打开上下文" @click="contextOpen = true">
@@ -288,6 +295,11 @@
             <span><strong>当前资料</strong><small>{{ taskFiles.length ? `${taskFiles.length} 个文件` : '等待添加' }}</small></span>
             <i :class="{ muted: taskFiles.length === 0 }" />
           </div>
+          <button v-if="isDesktop" class="source-card local-workspace" type="button" @click="openLocalWorkspace">
+            <span class="source-icon workspace"><svg viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v10H3zM3 7V5h7l2 2" /></svg></span>
+            <span><strong>本地工作区</strong><small>{{ workspaceRoot || '尚未选择' }}</small></span>
+            <svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6" /></svg>
+          </button>
         </section>
 
         <section class="context-section model-section">
@@ -384,6 +396,16 @@ const taskStatus = ref<TaskStatus>('idle');
 const taskTitle = ref('');
 const uploadingFiles = ref(false);
 const streamCtrl = ref<AbortController | null>(null);
+const desktopBridge = (window as any).desktop as {
+  isElectron?: boolean;
+  getInfo?: () => Promise<{ appVersion?: string }>;
+  getWorkspace?: () => Promise<string>;
+  chooseWorkspace?: () => Promise<string | null>;
+  openWorkspace?: () => Promise<string>;
+} | undefined;
+const isDesktop = ref(!!desktopBridge?.isElectron);
+const desktopVersion = ref('');
+const workspaceRoot = ref('');
 let eventSequence = 0;
 
 const displayName = computed(() => user.value?.nickname || user.value?.username || '访客');
@@ -824,12 +846,33 @@ function handleShortcut(event: KeyboardEvent) {
   if (event.key === 'Escape') closePanels();
 }
 
-onMounted(() => {
+async function chooseLocalWorkspace() {
+  const selected = await desktopBridge?.chooseWorkspace?.();
+  if (selected) workspaceRoot.value = selected;
+}
+
+async function openLocalWorkspace() {
+  await desktopBridge?.openWorkspace?.();
+}
+
+onMounted(async () => {
   const footer = document.querySelector('body > footer');
   if (footer) (footer as HTMLElement).style.display = 'none';
   loggedIn.value = !!getToken() && !!getUser();
   fetchSessions();
   window.addEventListener('keydown', handleShortcut);
+  if (isDesktop.value) {
+    try {
+      const [info, root] = await Promise.all([
+        desktopBridge?.getInfo?.(),
+        desktopBridge?.getWorkspace?.(),
+      ]);
+      desktopVersion.value = info?.appVersion ? `v${info.appVersion}` : '';
+      workspaceRoot.value = root || '';
+    } catch {
+      // Desktop bridge is optional; browser mode keeps working unchanged.
+    }
+  }
 });
 
 onUnmounted(() => {
@@ -855,6 +898,14 @@ onUnmounted(() => {
   overflow: hidden;
   color: var(--wb-ink);
   isolation: isolate;
+}
+
+:global(body.app-chromeless) .workbench {
+  min-height: 100vh;
+}
+
+:global(body.app-chromeless) .workbench-layout {
+  height: calc(100vh - 108px);
 }
 
 .workbench-glow {
@@ -943,6 +994,7 @@ onUnmounted(() => {
 }
 
 .quiet-button,
+.workspace-button,
 .icon-button,
 .new-task-button,
 .nav-item,
@@ -966,6 +1018,33 @@ onUnmounted(() => {
 .quiet-button:hover {
   color: var(--wb-blue-deep);
   background: rgba(91, 123, 255, 0.08);
+}
+
+.desktop-state {
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: rgba(23, 27, 46, 0.06);
+  color: #7c8296;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.workspace-button {
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid rgba(91, 123, 255, 0.18);
+  border-radius: 9px;
+  background: rgba(91, 123, 255, 0.07);
+  color: var(--wb-blue-deep);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: 160ms ease;
+}
+
+.workspace-button:hover {
+  border-color: rgba(91, 123, 255, 0.35);
+  background: rgba(91, 123, 255, 0.11);
 }
 
 .icon-button {
@@ -996,6 +1075,10 @@ onUnmounted(() => {
   stroke-width: 1.7;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.home-button {
+  text-decoration: none;
 }
 
 .workbench-layout {
@@ -2166,6 +2249,37 @@ onUnmounted(() => {
   background: #cdd0d9;
 }
 
+.local-workspace {
+  width: 100%;
+  margin-top: 6px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.local-workspace:hover {
+  border-color: rgba(91, 123, 255, 0.22);
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.source-icon.workspace {
+  background: rgba(91, 123, 255, 0.08);
+  color: var(--wb-blue-deep);
+}
+
+.local-workspace > svg {
+  width: 12px;
+  color: #a4a9b7;
+}
+
+.local-workspace small {
+  max-width: 185px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .mode-card {
   padding: 11px;
 }
@@ -2422,7 +2536,7 @@ onUnmounted(() => {
   }
 
   .workbench-layout {
-    height: calc(100vh - 112px);
+    height: calc(100vh - 84px);
     min-height: 620px;
     display: block;
     border-radius: 16px;

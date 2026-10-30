@@ -18,9 +18,10 @@ interface Props {
   title?: string;
   description?: string;
   ogImage?: string;
+  chromeless?: boolean;
 }
 
-const { title, description, ogImage } = Astro.props;
+const { title, description, ogImage, chromeless = false } = Astro.props;
 const pageTitle = title ? `${title} - Ray的垃圾站` : 'Ray的垃圾站';
 ---
 
@@ -113,9 +114,9 @@ const pageTitle = title ? `${title} - Ray的垃圾站` : 'Ray的垃圾站';
     </script>
     <ViewTransitions />
   </head>
-  <body class="min-h-screen flex flex-col">
+  <body class={`min-h-screen flex flex-col${chromeless ? ' app-chromeless' : ''}`}>
     <div id="bg-overlay"></div>
-    <Header />
+    {!chromeless && <Header />}
     <main class="flex-1 page-enter">
       <slot />
     </main>
