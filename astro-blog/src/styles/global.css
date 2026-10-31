@@ -189,6 +189,33 @@ header {
 .dark-mode .prose pre,
 .dark-mode .prose pre * { background-color: #0d1117 !important; color: #c9d1d9 !important; }
 
+/* Inline HTML from the agent may mix light/dark surfaces with hard-coded colors. */
+.content-adaptive-color {
+  color: var(--content-light-color, #334155) !important;
+}
+
+.dark-mode .content-adaptive-color {
+  color: var(--content-dark-color, #e2e8f0) !important;
+}
+
+[data-content-surface="dark"],
+[data-content-surface="dark"] :where(p, li, strong, b, em, td, th, h1, h2, h3, h4) {
+  color: #e8eef8 !important;
+}
+
+[data-content-surface="dark"] :where(a) {
+  color: #a5b4fc !important;
+}
+
+[data-content-surface="light"],
+[data-content-surface="light"] :where(p, li, strong, b, em, td, th, h1, h2, h3, h4) {
+  color: #334155 !important;
+}
+
+[data-content-surface="light"] :where(a) {
+  color: #4359d6 !important;
+}
+
 .dark-mode .glass,
 .dark-mode .glass-card {
   background: rgba(25, 25, 38, var(--panel-opacity)) !important;

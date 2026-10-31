@@ -194,6 +194,9 @@ import { $isLoggedIn } from '@lib/store';
 import { getToken } from '@lib/auth';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
+import { normalizeAgentMarkdown, wrapMarkdownTables } from '@lib/agentMarkdown.mjs';
+import { normalizeHtmlContrast } from '@lib/contentContrast.mjs';
 import ThinkingCard from './ThinkingCard.vue';
 import ThinkingTyping from './ThinkingTyping.vue';
 
@@ -669,8 +672,9 @@ async function translateEnglishThinking(block: AgentBlock) {
 
 function renderMarkdown(content: string): string {
   if (!content) return '';
-  const html = marked.parse(content, { breaks: true }) as string;
-  return html;
+  const normalized = normalizeAgentMarkdown(content);
+  const html = marked.parse(normalized, { breaks: true, gfm: true }) as string;
+  return normalizeHtmlContrast(wrapMarkdownTables(DOMPurify.sanitize(html)));
 }
 
 function downloadMessage(content: string) {

@@ -10,6 +10,14 @@ const workbenchJs = readdirSync(cssDir)
   .filter(name => name.startsWith('WorkbenchView.') && name.endsWith('.js'))
   .map(name => readFileSync(join(cssDir, name), 'utf8'))
   .join('\n');
+const allClientJs = readdirSync(cssDir)
+  .filter(name => name.endsWith('.js'))
+  .map(name => readFileSync(join(cssDir, name), 'utf8'))
+  .join('\n');
+const allClientCss = readdirSync(cssDir)
+  .filter(name => name.endsWith('.css'))
+  .map(name => readFileSync(join(cssDir, name), 'utf8'))
+  .join('\n');
 
 if (/body\.app-chromeless\s*\{[^}]*display\s*:\s*none/i.test(workbenchCss)) {
   throw new Error('Scoped CSS incorrectly hides body.app-chromeless');
@@ -55,7 +63,7 @@ if (!/\.artifact-content(?:\s|\[|:)[^{]*\{[^}]*font-size\s*:\s*calc\([^;]*12px\)
   throw new Error('Task output text must use the enlarged reading size');
 }
 
-if (!workbenchJs.includes('markdown-table-wrap')) {
+if (!allClientJs.includes('markdown-table-wrap')) {
   throw new Error('Agent Markdown tables must render inside a responsive scroll container');
 }
 
@@ -69,6 +77,10 @@ if (!/workflow-card-scan/i.test(workbenchCss) || !/workflow-rail-flow/i.test(wor
 
 if (!workbenchJs.includes('confirmation_required') || !workbenchJs.includes('task-state')) {
   throw new Error('Workbench build must include durable task state and write confirmations');
+}
+
+if (!allClientJs.includes('content-adaptive-color') || !allClientCss.includes('data-content-surface')) {
+  throw new Error('Agent and article HTML must keep readable inline-color fallbacks');
 }
 
 console.log('Workbench CSS scope check passed');

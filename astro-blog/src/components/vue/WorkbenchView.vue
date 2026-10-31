@@ -1206,6 +1206,7 @@ import { getAvatarUrl, getToken, getUser, setUser } from '@lib/auth';
 import { normalizeAgentMarkdown, wrapMarkdownTables } from '@lib/agentMarkdown.mjs';
 import { artifactFromToolResult } from '@lib/artifactResults.mjs';
 import { snapshotConfirmation } from '@lib/confirmationState.mjs';
+import { normalizeHtmlContrast } from '@lib/contentContrast.mjs';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
@@ -3140,7 +3141,7 @@ async function saveSettings() {
 function renderMarkdown(content: string) {
   const normalized = normalizeAgentMarkdown(content);
   const html = marked.parse(normalized, { breaks: true, gfm: true }) as string;
-  return wrapMarkdownTables(DOMPurify.sanitize(html));
+  return normalizeHtmlContrast(wrapMarkdownTables(DOMPurify.sanitize(html)));
 }
 
 async function fetchSessions() {

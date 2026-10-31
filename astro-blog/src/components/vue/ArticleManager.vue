@@ -61,7 +61,7 @@
             <button type="button" @click="preview = true" :class="preview ? 'text-brand-600 font-medium' : 'text-gray-400'" class="text-xs">预览</button>
           </div>
           <textarea v-if="!preview" v-model="form.content" placeholder="内容 (支持 HTML/Markdown)" rows="10" class="w-full px-4 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-brand-500 font-mono" />
-          <div v-else class="w-full px-4 py-2 border rounded-lg text-sm min-h-[200px] prose prose-sm max-w-none" v-html="form.content || '<p class=text-gray-400>暂无内容</p>'" />
+          <div v-else class="w-full px-4 py-2 border rounded-lg text-sm min-h-[200px] prose prose-sm max-w-none" v-html="previewHtml" />
         </div>
         <div class="flex justify-end gap-2 mt-4">
           <button @click="editing = false" class="px-4 py-2 border rounded-lg text-sm text-gray-600 hover:bg-gray-50">取消</button>
@@ -73,8 +73,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { computed, ref, onMounted } from 'vue';
+import DOMPurify from 'dompurify';
 import { getToken } from '@lib/auth';
+import { normalizeHtmlContrast } from '@lib/contentContrast.mjs';
 
 const api = (url: string, opts?: RequestInit) =>
   fetch(url, { ...opts, headers: { ...opts?.headers, token: getToken() || '', 'Content-Type': 'application/json' } }).then(r => r.json());
@@ -88,6 +90,9 @@ const preview = ref(false);
 const editId = ref<string | null>(null);
 const saving = ref(false);
 const form = ref({ title: '', categoryId: 0, tags: '', summary: '', content: '' });
+const previewHtml = computed(() => normalizeHtmlContrast(
+  DOMPurify.sanitize(form.value.content || '<p class="text-gray-400">暂无内容</p>'),
+));
 
 onMounted(() => { load(); loadCategories(); });
 

@@ -191,6 +191,9 @@ import { $isLoggedIn } from '@lib/store';
 import { getToken } from '@lib/auth';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
+import { normalizeAgentMarkdown, wrapMarkdownTables } from '@lib/agentMarkdown.mjs';
+import { normalizeHtmlContrast } from '@lib/contentContrast.mjs';
 import ThinkingCard from './ThinkingCard.vue';
 import ThinkingTyping from './ThinkingTyping.vue';
 import { TOOL_NAMES } from '@lib/toolNames';
@@ -401,7 +404,9 @@ function mergeToolBlocks(blocks: any[] | undefined): any[] {
 
 function renderMarkdown(content: string): string {
   if (!content) return '';
-  return marked.parse(content, { breaks: true }) as string;
+  const normalized = normalizeAgentMarkdown(content);
+  const html = marked.parse(normalized, { breaks: true, gfm: true }) as string;
+  return normalizeHtmlContrast(wrapMarkdownTables(DOMPurify.sanitize(html)));
 }
 async function sendMsg() {
   const text = input.value.trim();

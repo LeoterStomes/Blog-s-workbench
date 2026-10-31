@@ -48,6 +48,19 @@ function fmt(d: Date) { return new Date(d).toLocaleDateString('zh-CN', { year:'n
   </footer>
 </article>
 
+<script>
+  import { normalizeContentContrast } from '@lib/contentContrast.mjs';
+
+  function normalizeArticleContrast() {
+    document.querySelectorAll('.article-body, .agent-markdown').forEach((root) => {
+      normalizeContentContrast(root);
+    });
+  }
+
+  normalizeArticleContrast();
+  document.addEventListener('astro:page-load', normalizeArticleContrast);
+</script>
+
 <style is:global>
   /* Cover */
   .cover-wrap { border-radius: 16px; overflow: hidden; }

@@ -71,6 +71,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import DOMPurify from 'dompurify';
+import { normalizeContentContrast } from '@lib/contentContrast.mjs';
 import CommentSection from './CommentSection.vue';
 
 interface Article {
@@ -112,6 +113,8 @@ const publishedLabel = computed(() => {
 function prepareContent(content = '') {
   const sanitized = DOMPurify.sanitize(content);
   const documentNode = new DOMParser().parseFromString(`<div id="content-root">${sanitized}</div>`, 'text/html');
+  const contentRoot = documentNode.querySelector('#content-root');
+  if (contentRoot) normalizeContentContrast(contentRoot);
   const headings = [...documentNode.querySelectorAll('h1, h2, h3')];
   toc.value = headings.map((heading, index) => {
     const id = heading.id || `toc-${index + 1}`;
@@ -122,7 +125,7 @@ function prepareContent(content = '') {
       level: Number(heading.tagName.slice(1)),
     };
   });
-  contentHtml.value = documentNode.querySelector('#content-root')?.innerHTML || '';
+  contentHtml.value = contentRoot?.innerHTML || '';
 }
 
 async function loadArticle() {
