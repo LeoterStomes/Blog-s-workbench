@@ -57,6 +57,15 @@ from services.prompt_builder import build_system_prompt as _build_prompt
 _session_matches: dict[int, dict] = {}
 
 MAX_TOOL_ROUNDS = 18  # 兜底值，配合连续 3 次失败断路器
+MARKDOWN_RESPONSE_RULES = """
+
+## Markdown 回复格式
+- 正式回答使用标准 GitHub Flavored Markdown；标题标记后必须有空格。
+- 多个条目需要对照相同字段、批量修改或多列说明时，优先使用 Markdown 表格。
+- 标题和表格必须各自独占一行，表格前后保留空行，分隔行使用标准 `|---|`。
+- 不要在表格行末添加反斜杠续行，不要用 `&#x20;` 等 HTML 实体填补表格格式。
+- 单个结论、简短说明或自然对话不需要为了形式强行使用表格。
+"""
 
 
 async def _compress_and_store(session_id: int, user_id: int):
@@ -367,6 +376,7 @@ async def stream_chat(
                 sys_prompt
                 + f"\n当前时间：{now_str}"
                 + agent_mode_instruction(agent_mode)
+                + MARKDOWN_RESPONSE_RULES
                 + user_ctx
                 + memory_ctx
             ),

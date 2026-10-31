@@ -51,4 +51,12 @@ if (!/\.artifact-preview(?:\s|\[|:)[^{]*\{[^}]*flex-shrink\s*:\s*0/i.test(workbe
   throw new Error('Artifact preview must not collapse over the context footnote in short windows');
 }
 
+if (!/\.artifact-content(?:\s|\[|:)[^{]*\{[^}]*font-size\s*:\s*calc\([^;]*12px\)/i.test(workbenchCss)) {
+  throw new Error('Task output text must use the enlarged reading size');
+}
+
+if (!workbenchJs.includes('markdown-table-wrap')) {
+  throw new Error('Agent Markdown tables must render inside a responsive scroll container');
+}
+
 console.log('Workbench CSS scope check passed');

@@ -1142,6 +1142,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { getAvatarUrl, getToken, getUser, setUser } from '@lib/auth';
+import { normalizeAgentMarkdown, wrapMarkdownTables } from '@lib/agentMarkdown.mjs';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
@@ -2589,7 +2590,9 @@ async function saveSettings() {
 }
 
 function renderMarkdown(content: string) {
-  return DOMPurify.sanitize(marked.parse(content || '', { breaks: true }) as string);
+  const normalized = normalizeAgentMarkdown(content);
+  const html = marked.parse(normalized, { breaks: true, gfm: true }) as string;
+  return wrapMarkdownTables(DOMPurify.sanitize(html));
 }
 
 async function fetchSessions() {
@@ -4047,8 +4050,8 @@ onUnmounted(() => {
   border-radius: 4px 15px 15px 15px;
   background: rgba(255, 255, 255, 0.74);
   color: #50566b;
-  font-size: calc(var(--wb-font-scale) * 11px);
-  line-height: 1.75;
+  font-size: calc(var(--wb-font-scale) * 12px);
+  line-height: 1.8;
 }
 
 .event-artifact {
@@ -6272,8 +6275,8 @@ onUnmounted(() => {
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.6);
   color: #5e6579;
-  font-size: calc(var(--wb-font-scale) * 10px);
-  line-height: 1.7;
+  font-size: calc(var(--wb-font-scale) * 12px);
+  line-height: 1.75;
 }
 
 .artifact-content :deep(h1),
@@ -6284,9 +6287,9 @@ onUnmounted(() => {
   line-height: 1.25;
 }
 
-.artifact-content :deep(h1) { font-size: calc(var(--wb-font-scale) * 17px); }
-.artifact-content :deep(h2) { font-size: calc(var(--wb-font-scale) * 14px); }
-.artifact-content :deep(h3) { font-size: calc(var(--wb-font-scale) * 12px); }
+.artifact-content :deep(h1) { font-size: calc(var(--wb-font-scale) * 19px); }
+.artifact-content :deep(h2) { font-size: calc(var(--wb-font-scale) * 16px); }
+.artifact-content :deep(h3) { font-size: calc(var(--wb-font-scale) * 14px); }
 .artifact-content :deep(p) { margin: 0.6em 0; }
 .artifact-content :deep(ul),
 .artifact-content :deep(ol) { padding-left: 18px; }
