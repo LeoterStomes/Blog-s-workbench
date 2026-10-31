@@ -35,4 +35,12 @@ if (workbenchJs.includes('event-thinking')) {
   throw new Error('Thinking events must not reuse the generic task-event wrapper');
 }
 
+if (!workbenchJs.includes('artifact-html-frame') || !workbenchJs.includes('allow-downloads')) {
+  throw new Error('Artifact HTML preview must render inside the dedicated sandboxed frame');
+}
+
+if (workbenchJs.includes('allow-same-origin')) {
+  throw new Error('Untrusted artifact frames must not receive same-origin privileges');
+}
+
 console.log('Workbench CSS scope check passed');

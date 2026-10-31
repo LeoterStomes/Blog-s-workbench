@@ -261,7 +261,7 @@
                 <div v-else-if="event.type === 'artifact'" class="event-artifact">
                   <span class="artifact-icon"><svg viewBox="0 0 24 24"><path d="M5 3h9l5 5v13H5zM14 3v6h5M8 13h8M8 17h6" /></svg></span>
                   <span><strong>{{ event.content }}</strong><small>{{ event.format?.toUpperCase() }} 产物</small></span>
-                  <a :href="event.url" :download="event.content" target="_blank">下载</a>
+                  <a v-if="safeArtifactLink(event.url)" :href="safeArtifactLink(event.url)" :download="event.content" target="_blank" rel="noopener noreferrer">下载</a>
                 </div>
 
                 <div v-else-if="event.type === 'text'" class="event-assistant-row">
@@ -781,31 +781,120 @@
             <span><strong>{{ activeMode.label }}</strong><small>{{ activeMode.description }}</small></span>
             <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" /></svg>
           </div>
-          <div v-if="toolEvents.length" class="tool-mini-list">
-            <div v-for="tool in toolEvents.slice(-4)" :key="tool.id" class="tool-mini-item">
-              <span class="tool-status-dot" :class="tool.status" />
-              <span>{{ tool.displayName }}</span>
-            </div>
-          </div>
         </section>
 
         <section class="artifact-preview">
-          <div class="context-section-head">
-            <span>产物预览</span>
-            <small>{{ artifacts.length ? `${artifacts.length} 个产物` : outputText ? '实时生成' : '等待生成' }}</small>
+          <div class="artifact-preview-heading">
+            <div class="artifact-preview-title">
+              <span>任务输出</span>
+              <small>{{ artifacts.length ? `${artifacts.length} 个产物` : isRunning ? '正在生成' : taskTrace.length ? `${taskTrace.length} 个步骤` : '等待生成' }}</small>
+            </div>
+            <div class="artifact-mode-switch" role="tablist" aria-label="任务输出视图">
+              <button
+                type="button"
+                role="tab"
+                :aria-selected="contextPanelMode === 'preview'"
+                :class="{ active: contextPanelMode === 'preview' }"
+                @click="contextPanelMode = 'preview'"
+              >预览</button>
+              <button
+                type="button"
+                role="tab"
+                :aria-selected="contextPanelMode === 'trace'"
+                :class="{ active: contextPanelMode === 'trace' }"
+                @click="contextPanelMode = 'trace'"
+              >轨迹 <span>{{ taskTrace.length }}</span></button>
+            </div>
           </div>
-          <div v-if="artifacts.length" class="artifact-links">
-            <a v-for="artifact in artifacts" :key="artifact.id" :href="artifact.url" :download="artifact.content" target="_blank">
-              <span><svg viewBox="0 0 24 24"><path d="M5 3h9l5 5v13H5zM14 3v6h5" /></svg></span>
-              <strong>{{ artifact.content }}</strong>
-              <small>{{ artifact.format?.toUpperCase() }}</small>
-            </a>
+
+          <div v-if="contextPanelMode === 'preview'" class="artifact-preview-body" role="tabpanel">
+            <template v-if="artifacts.length">
+              <div class="artifact-selector" role="listbox" aria-label="任务产物">
+                <button
+                  v-for="artifact in artifacts"
+                  :key="artifact.id"
+                  type="button"
+                  role="option"
+                  :aria-selected="selectedArtifact?.id === artifact.id"
+                  :class="{ active: selectedArtifact?.id === artifact.id }"
+                  @click="selectedArtifactId = artifact.id"
+                >
+                  <span class="artifact-selector-icon">
+                    <svg viewBox="0 0 24 24"><path d="M5 3h9l5 5v13H5zM14 3v6h5" /></svg>
+                  </span>
+                  <span class="artifact-selector-copy">
+                    <strong>{{ artifact.content }}</strong>
+                    <small>{{ artifact.format?.toUpperCase() }} 产物</small>
+                  </span>
+                  <i v-if="isHtmlArtifact(artifact)" title="可内嵌预览">HTML</i>
+                </button>
+              </div>
+
+              <template v-if="selectedArtifact">
+                <div v-if="selectedArtifactIsHtml" class="html-artifact-stage">
+                  <iframe
+                    :key="selectedArtifact.id"
+                    :src="safeArtifactLink(selectedArtifact.url)"
+                    class="artifact-html-frame"
+                    :title="selectedArtifact.content"
+                    sandbox="allow-scripts allow-forms allow-downloads allow-popups"
+                    referrerpolicy="no-referrer"
+                  />
+                </div>
+                <div v-else class="artifact-file-card">
+                  <span class="artifact-file-mark">{{ selectedArtifact.format?.toUpperCase() || 'FILE' }}</span>
+                  <span>
+                    <strong>{{ selectedArtifact.content }}</strong>
+                    <small>该格式暂不内嵌，可下载或使用默认程序打开。</small>
+                  </span>
+                </div>
+                <div class="artifact-actions">
+                  <a v-if="safeArtifactLink(selectedArtifact.url)" :href="safeArtifactLink(selectedArtifact.url)" target="_blank" rel="noopener noreferrer">浏览器打开</a>
+                  <a v-if="safeArtifactLink(selectedArtifact.url)" :href="safeArtifactLink(selectedArtifact.url)" :download="selectedArtifact.content">下载文件</a>
+                </div>
+                <p v-if="!safeArtifactLink(selectedArtifact.url)" class="artifact-url-warning">产物地址未通过安全校验，已阻止直接打开。</p>
+              </template>
+            </template>
+            <div v-else-if="outputText" class="artifact-content agent-markdown" v-html="renderMarkdown(outputText)" />
+            <div v-else class="artifact-placeholder">
+              <svg viewBox="0 0 24 24"><path d="M5 3h9l5 5v13H5V3zm9 0v6h6M8 13h8M8 17h6" /></svg>
+              <strong>[文章预览区域]</strong>
+              <p>任务开始后，这里会显示交互式 HTML、文章草稿和可下载产物。</p>
+            </div>
           </div>
-          <div v-else-if="outputText" class="artifact-content agent-markdown" v-html="renderMarkdown(outputText)" />
-          <div v-else class="artifact-placeholder">
-            <svg viewBox="0 0 24 24"><path d="M5 3h9l5 5v13H5V3zm9 0v6h6M8 13h8M8 17h6" /></svg>
-            <strong>[文章预览区域]</strong>
-            <p>任务开始后，这里会显示文章草稿、修改差异和可下载产物。</p>
+
+          <div v-else class="trace-panel" role="tabpanel">
+            <div v-if="taskTrace.length" class="trace-list">
+              <article
+                v-for="item in taskTrace"
+                :key="item.eventId"
+                class="trace-item"
+                :class="[`trace-${item.type}`, item.status ? `trace-status-${item.status}` : '']"
+              >
+                <span class="trace-marker">{{ item.mark }}</span>
+                <div class="trace-copy">
+                  <div class="trace-heading">
+                    <strong>{{ item.title }}</strong>
+                    <small v-if="item.meta">{{ item.meta }}</small>
+                  </div>
+                  <p
+                    v-if="item.detail"
+                    :class="{ expanded: isTraceExpanded(item.eventId), clipped: traceNeedsExpansion(item) }"
+                  >{{ item.detail }}</p>
+                  <button
+                    v-if="traceNeedsExpansion(item)"
+                    type="button"
+                    class="trace-expand"
+                    @click="toggleTraceItem(item.eventId)"
+                  >{{ isTraceExpanded(item.eventId) ? '收起' : '展开完整内容' }}</button>
+                </div>
+              </article>
+            </div>
+            <div v-else class="trace-empty">
+              <span>00</span>
+              <strong>还没有执行轨迹</strong>
+              <p>任务开始后，请求、分析、工具和产物会按发生顺序出现在这里。</p>
+            </div>
           </div>
         </section>
 
@@ -855,6 +944,7 @@ interface SessionItem {
 type TaskStatus = 'idle' | 'connecting' | 'running' | 'done' | 'error' | 'cancelled';
 type TaskEventType = 'user' | 'thinking' | 'tool' | 'text' | 'artifact' | 'error';
 type AgentMode = 'readonly' | 'plan' | 'execute';
+type ContextPanelMode = 'preview' | 'trace';
 
 interface TaskEvent {
   id: number;
@@ -867,6 +957,16 @@ interface TaskEvent {
   result?: unknown;
   url?: string;
   format?: string;
+}
+
+interface TaskTraceItem {
+  eventId: number;
+  type: TaskEventType;
+  mark: string;
+  title: string;
+  detail: string;
+  meta?: string;
+  status?: 'running' | 'done' | 'error';
 }
 
 type CapabilityKind = 'skill' | 'mcp' | 'prompt';
@@ -987,6 +1087,9 @@ const avatarSaving = ref('');
 const avatarError = ref('');
 const agentAvatar = ref('');
 const analysisExpanded = ref(true);
+const contextPanelMode = ref<ContextPanelMode>('preview');
+const selectedArtifactId = ref<number | null>(null);
+const expandedTraceIds = ref<number[]>([]);
 const settingsForm = ref({
   nickname: '',
   email: '',
@@ -1003,12 +1106,83 @@ const agentAvatarStorageKey = computed(() => `workbench:agentAvatar:${user.value
 const isRunning = computed(() => taskStatus.value === 'connecting' || taskStatus.value === 'running');
 const toolEvents = computed(() => taskEvents.value.filter(event => event.type === 'tool'));
 const artifacts = computed(() => taskEvents.value.filter(event => event.type === 'artifact'));
+const selectedArtifact = computed(() => (
+  artifacts.value.find(event => event.id === selectedArtifactId.value) || artifacts.value[0] || null
+));
+const selectedArtifactIsHtml = computed(() => (
+  selectedArtifact.value ? isHtmlArtifact(selectedArtifact.value) : false
+));
 const outputText = computed(() => taskEvents.value
   .filter(event => event.type === 'text')
   .map(event => event.content || '')
   .join('\n\n')
   .trim());
 const visibleTaskEvents = computed(() => taskEvents.value.filter(event => event.type !== 'tool'));
+const taskTrace = computed<TaskTraceItem[]>(() => taskEvents.value.map(event => {
+  if (event.type === 'user') {
+    return {
+      eventId: event.id,
+      type: event.type,
+      mark: '你',
+      title: '你的需求',
+      detail: event.content || '',
+      meta: '任务起点',
+    };
+  }
+  if (event.type === 'thinking') {
+    return {
+      eventId: event.id,
+      type: event.type,
+      mark: '析',
+      title: event.status === 'running' ? '正在分析任务' : '任务分析',
+      detail: event.content || (event.status === 'running' ? '正在梳理目标、资料和执行步骤。' : '分析已完成。'),
+      meta: event.status === 'running' ? '进行中' : '已完成',
+      status: event.status,
+    };
+  }
+  if (event.type === 'tool') {
+    return {
+      eventId: event.id,
+      type: event.type,
+      mark: '工',
+      title: event.displayName || event.tool || '工具调用',
+      detail: toolDescription(event),
+      meta: event.status === 'running' ? '调用中' : event.status === 'error' ? '失败' : '完成',
+      status: event.status,
+    };
+  }
+  if (event.type === 'text') {
+    return {
+      eventId: event.id,
+      type: event.type,
+      mark: 'AI',
+      title: 'Agent 回复',
+      detail: event.content || '',
+      meta: '已输出',
+      status: event.status,
+    };
+  }
+  if (event.type === 'artifact') {
+    return {
+      eventId: event.id,
+      type: event.type,
+      mark: '物',
+      title: event.content || '任务产物',
+      detail: `${String(event.format || 'file').toUpperCase()} 格式已写入当前任务。`,
+      meta: '产物',
+      status: 'done',
+    };
+  }
+  return {
+    eventId: event.id,
+    type: event.type,
+    mark: '!',
+    title: '执行异常',
+    detail: event.content || '任务执行失败。',
+    meta: '需要处理',
+    status: 'error',
+  };
+}));
 const statusLabel = computed(() => ({
   idle: '空闲',
   connecting: '正在连接',
@@ -1237,6 +1411,9 @@ function startNewTask() {
   taskTitle.value = '';
   taskFeedFollowing.value = true;
   taskStatus.value = 'idle';
+  contextPanelMode.value = 'preview';
+  selectedArtifactId.value = null;
+  expandedTraceIds.value = [];
   activeSection.value = 'overview';
   agentMode.value = defaultAgentMode.value;
   draft.value = '';
@@ -1282,8 +1459,10 @@ function nextEventId() {
 }
 
 function pushEvent(event: Omit<TaskEvent, 'id'>) {
-  taskEvents.value.push({ ...event, id: nextEventId() });
+  const id = nextEventId();
+  taskEvents.value.push({ ...event, id });
   scrollTaskFeed();
+  return id;
 }
 
 function handleTaskFeedScroll() {
@@ -1349,6 +1528,51 @@ function artifactFromResult(result: any, fallbackFormat = '') {
   return { url: String(url), filename: String(filename), format: String(format) };
 }
 
+function isSafeArtifactUrl(url?: string) {
+  const safeUrl = safeArtifactLink(url);
+  if (!safeUrl) return false;
+  try {
+    return new URL(safeUrl).origin === window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
+function safeArtifactLink(url?: string) {
+  if (!url) return '';
+  try {
+    const parsed = new URL(url, window.location.origin);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : '';
+  } catch {
+    return '';
+  }
+}
+
+function isHtmlArtifact(event: TaskEvent) {
+  if (!isSafeArtifactUrl(event.url)) return false;
+  const format = String(event.format || '').toLowerCase();
+  if (format === 'html' || format === 'htm' || format === 'text/html') return true;
+  try {
+    return /\.html?$/i.test(new URL(event.url || '', window.location.origin).pathname);
+  } catch {
+    return false;
+  }
+}
+
+function isTraceExpanded(eventId: number) {
+  return expandedTraceIds.value.includes(eventId);
+}
+
+function traceNeedsExpansion(item: TaskTraceItem) {
+  return item.detail.length > 180 || (item.detail.match(/\n/g) || []).length > 3;
+}
+
+function toggleTraceItem(eventId: number) {
+  expandedTraceIds.value = isTraceExpanded(eventId)
+    ? expandedTraceIds.value.filter(id => id !== eventId)
+    : [...expandedTraceIds.value, eventId];
+}
+
 async function uploadPendingFiles() {
   if (attachedFiles.value.length === 0) return [];
   uploadingFiles.value = true;
@@ -1402,6 +1626,9 @@ async function runTask() {
   const token = getToken() || '';
   taskStatus.value = 'connecting';
   taskTitle.value ||= text.slice(0, 48);
+  contextPanelMode.value = 'trace';
+  selectedArtifactId.value = null;
+  expandedTraceIds.value = [];
   pushEvent({ type: 'user', content: text });
   draft.value = '';
   resizeComposer();
@@ -1479,12 +1706,16 @@ async function runTask() {
               tool.result = data.result;
               const artifact = artifactFromResult(data.result);
               if (artifact && !artifacts.value.some(item => item.url === artifact.url)) {
-                pushEvent({
+                const artifactId = pushEvent({
                   type: 'artifact',
                   content: artifact.filename,
                   url: artifact.url,
                   format: artifact.format,
                 });
+                if (selectedArtifactId.value === null) {
+                  selectedArtifactId.value = artifactId;
+                  contextPanelMode.value = 'preview';
+                }
               }
             }
           } catch {
@@ -5282,33 +5513,279 @@ onUnmounted(() => {
   color: #9ba0ae;
 }
 
-.tool-mini-list {
-  display: grid;
-  gap: 5px;
-  margin-top: 7px;
-}
-
-.tool-mini-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 8px;
-  color: #8f95a5;
-  font-size: calc(var(--wb-font-scale) * 8px);
-}
-
-.tool-mini-item .tool-status-dot {
-  width: 5px;
-  height: 5px;
-  box-shadow: none;
-}
-
 .artifact-preview {
   min-height: 0;
   margin-top: 22px;
   flex: 1;
   display: flex;
   flex-direction: column;
+}
+
+.artifact-preview-heading {
+  margin-bottom: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.artifact-preview-title {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.artifact-preview-title > span {
+  color: #777e92;
+  font-size: calc(var(--wb-font-scale) * 9px);
+  font-weight: 600;
+}
+
+.artifact-preview-title small {
+  color: #a4a9b7;
+  font-size: calc(var(--wb-font-scale) * 7px);
+}
+
+.artifact-mode-switch {
+  flex-shrink: 0;
+  padding: 2px;
+  border-radius: 8px;
+  display: flex;
+  background: #eef0f5;
+}
+
+.artifact-mode-switch button {
+  height: 25px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  color: #969cac;
+  font: inherit;
+  font-size: calc(var(--wb-font-scale) * 8px);
+  cursor: pointer;
+  transition: 150ms ease;
+}
+
+.artifact-mode-switch button span {
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  border-radius: 5px;
+  display: inline-grid;
+  place-items: center;
+  background: rgba(111, 120, 147, 0.09);
+  font-size: calc(var(--wb-font-scale) * 6px);
+}
+
+.artifact-mode-switch button.active {
+  background: white;
+  color: #454d63;
+  box-shadow: 0 2px 7px rgba(54, 63, 96, 0.08);
+  font-weight: 650;
+}
+
+.artifact-mode-switch button.active span {
+  background: rgba(91, 123, 255, 0.1);
+  color: var(--wb-blue-deep);
+}
+
+.artifact-preview-body {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.artifact-selector {
+  flex-shrink: 0;
+  max-height: 132px;
+  overflow-y: auto;
+  display: grid;
+  gap: 6px;
+  scrollbar-width: thin;
+}
+
+.artifact-selector button {
+  width: 100%;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--wb-line);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.48);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.artifact-selector button:hover,
+.artifact-selector button.active {
+  border-color: rgba(91, 123, 255, 0.28);
+  background: rgba(91, 123, 255, 0.055);
+}
+
+.artifact-selector-icon {
+  width: 27px;
+  height: 27px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: rgba(91, 123, 255, 0.08);
+  color: var(--wb-blue-deep);
+}
+
+.artifact-selector-icon svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+}
+
+.artifact-selector-copy {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+}
+
+.artifact-selector-copy strong {
+  overflow: hidden;
+  color: #555b70;
+  font-size: calc(var(--wb-font-scale) * 8px);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-selector-copy small {
+  color: #9ba0af;
+  font-size: calc(var(--wb-font-scale) * 7px);
+}
+
+.artifact-selector button > i {
+  flex-shrink: 0;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(34, 197, 94, 0.09);
+  color: #27865a;
+  font-size: calc(var(--wb-font-scale) * 6px);
+  font-style: normal;
+  font-weight: 700;
+}
+
+.html-artifact-stage {
+  height: clamp(240px, 31vh, 520px);
+  min-height: clamp(240px, 31vh, 520px);
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 1px solid var(--wb-line);
+  border-radius: 12px;
+  background: white;
+}
+
+.artifact-html-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  background: white;
+  color-scheme: light;
+}
+
+.artifact-file-card {
+  min-height: 104px;
+  flex-shrink: 0;
+  padding: 14px;
+  border: 1px solid var(--wb-line);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  background:
+    linear-gradient(135deg, rgba(91, 123, 255, 0.045), transparent 60%),
+    rgba(255, 255, 255, 0.52);
+}
+
+.artifact-file-mark {
+  min-width: 45px;
+  height: 45px;
+  padding: 0 6px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: #2c3347;
+  color: white;
+  font-size: calc(var(--wb-font-scale) * 7px);
+  font-weight: 700;
+}
+
+.artifact-file-card > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.artifact-file-card strong {
+  overflow: hidden;
+  color: #555b70;
+  font-size: calc(var(--wb-font-scale) * 8px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-file-card small {
+  color: #989eae;
+  font-size: calc(var(--wb-font-scale) * 7px);
+  line-height: 1.5;
+}
+
+.artifact-actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: 7px;
+}
+
+.artifact-actions a {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--wb-line);
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  color: #666e83;
+  font-size: calc(var(--wb-font-scale) * 7px);
+  text-decoration: none;
+}
+
+.artifact-actions a:first-child {
+  border-color: #2c3347;
+  background: #2c3347;
+  color: white;
+}
+
+.artifact-actions a:hover {
+  border-color: rgba(91, 123, 255, 0.32);
+}
+
+.artifact-url-warning {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.06);
+  color: #b14d4d;
+  font-size: calc(var(--wb-font-scale) * 7px);
+  line-height: 1.5;
 }
 
 .artifact-placeholder {
@@ -5364,59 +5841,193 @@ onUnmounted(() => {
   font-size: calc(var(--wb-font-scale) * 9px);
 }
 
-.artifact-links {
-  min-height: 140px;
-  max-height: 310px;
-  overflow-y: auto;
-}
-
-.artifact-links a {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 10px;
-  border: 1px solid var(--wb-line);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.6);
-  color: inherit;
-  text-decoration: none;
-}
-
-.artifact-links a + a {
-  margin-top: 7px;
-}
-
-.artifact-links a > span {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border-radius: 7px;
-  background: rgba(91, 123, 255, 0.08);
-  color: var(--wb-blue-deep);
-}
-
-.artifact-links svg {
-  width: 14px;
-  height: 14px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.6;
-}
-
-.artifact-links strong {
-  min-width: 0;
-  overflow: hidden;
-  color: #555b70;
-  font-size: calc(var(--wb-font-scale) * 8px);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.trace-panel {
+  min-height: 0;
   flex: 1;
 }
 
-.artifact-links small {
-  color: #9ba0af;
+.trace-list {
+  max-height: clamp(300px, 46vh, 660px);
+  padding-right: 3px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(110, 120, 154, 0.28) transparent;
+}
+
+.trace-item {
+  position: relative;
+  padding: 0 0 14px;
+  display: grid;
+  grid-template-columns: 27px minmax(0, 1fr);
+  gap: 9px;
+}
+
+.trace-item:last-child {
+  padding-bottom: 0;
+}
+
+.trace-item::after {
+  content: '';
+  position: absolute;
+  left: 13px;
+  top: 30px;
+  bottom: 0;
+  width: 1px;
+  background: #e2e5ec;
+}
+
+.trace-item:last-child::after {
+  display: none;
+}
+
+.trace-marker {
+  position: relative;
+  z-index: 1;
+  width: 27px;
+  height: 27px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: #eef1f7;
+  color: #7e869a;
   font-size: calc(var(--wb-font-scale) * 7px);
+  font-weight: 750;
+  letter-spacing: -0.02em;
+}
+
+.trace-user .trace-marker {
+  background: #eaf0ff;
+  color: #4666d4;
+}
+
+.trace-thinking .trace-marker {
+  background: #fff4de;
+  color: #a46c19;
+}
+
+.trace-tool .trace-marker {
+  background: #e8f7ef;
+  color: #2a8058;
+}
+
+.trace-text .trace-marker {
+  background: #30384d;
+  color: white;
+}
+
+.trace-artifact .trace-marker {
+  background: rgba(91, 123, 255, 0.12);
+  color: var(--wb-blue-deep);
+}
+
+.trace-error .trace-marker {
+  background: #fdecec;
+  color: #c24343;
+}
+
+.trace-status-running .trace-marker {
+  box-shadow: 0 0 0 4px rgba(91, 123, 255, 0.08);
+  animation: trace-marker-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes trace-marker-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(91, 123, 255, 0.05); }
+  50% { box-shadow: 0 0 0 6px rgba(91, 123, 255, 0.09); }
+}
+
+.trace-copy {
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.trace-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.trace-heading strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #555c70;
+  font-size: calc(var(--wb-font-scale) * 8px);
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace-heading small {
+  flex-shrink: 0;
+  color: #a2a7b5;
+  font-size: calc(var(--wb-font-scale) * 6px);
+}
+
+.trace-copy p {
+  margin: 3px 0 0;
+  color: #8a91a3;
+  font-size: calc(var(--wb-font-scale) * 7px);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.trace-copy p.clipped:not(.expanded) {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.trace-expand {
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #657fce;
+  font: inherit;
+  font-size: calc(var(--wb-font-scale) * 7px);
+  cursor: pointer;
+}
+
+.trace-error .trace-heading strong,
+.trace-error .trace-copy p {
+  color: #b84b4b;
+}
+
+.trace-empty {
+  min-height: 156px;
+  padding: 20px;
+  border: 1px dashed #d7dae2;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.34);
+  text-align: center;
+}
+
+.trace-empty > span {
+  color: #c2c6d0;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: calc(var(--wb-font-scale) * 16px);
+  font-weight: 300;
+  letter-spacing: 0.08em;
+}
+
+.trace-empty strong {
+  margin-top: 7px;
+  color: #8f96a7;
+  font-size: calc(var(--wb-font-scale) * 9px);
+}
+
+.trace-empty p {
+  max-width: 200px;
+  margin: 5px 0 0;
+  color: #a9aebb;
+  font-size: calc(var(--wb-font-scale) * 8px);
+  line-height: 1.6;
 }
 
 .artifact-placeholder > svg {
@@ -5916,6 +6527,11 @@ onUnmounted(() => {
 :global(.dark-mode .mode-card),
 :global(.dark-mode .composer),
 :global(.dark-mode .font-zoom),
+:global(.dark-mode .artifact-selector button),
+:global(.dark-mode .artifact-file-card),
+:global(.dark-mode .artifact-content),
+:global(.dark-mode .artifact-placeholder),
+:global(.dark-mode .trace-empty),
 :global(.dark-mode .article-feed-sync > button),
 :global(.dark-mode .article-row-actions button) {
   background: rgba(34, 37, 52, 0.78);
@@ -5934,23 +6550,65 @@ onUnmounted(() => {
 :global(.dark-mode .context-heading h2),
 :global(.dark-mode .source-card strong),
 :global(.dark-mode .mode-card strong),
+:global(.dark-mode .artifact-selector-copy strong),
+:global(.dark-mode .artifact-file-card strong),
+:global(.dark-mode .trace-heading strong),
+:global(.dark-mode .trace-empty strong),
 :global(.dark-mode .article-copy > strong) {
   color: #e7eaf3;
 }
 
 :global(.dark-mode .article-summary),
 :global(.dark-mode .article-meta-line),
-:global(.dark-mode .font-zoom span) {
+:global(.dark-mode .font-zoom span),
+:global(.dark-mode .trace-copy p) {
   color: #9ca3b8;
 }
 
-:global(.dark-mode .context-tabs) {
+:global(.dark-mode .context-tabs),
+:global(.dark-mode .artifact-mode-switch) {
   background: rgba(255, 255, 255, 0.05);
 }
 
-:global(.dark-mode .context-tabs button.active) {
+:global(.dark-mode .context-tabs button.active),
+:global(.dark-mode .artifact-mode-switch button.active) {
   background: rgba(255, 255, 255, 0.09);
   color: #e7eaf3;
+}
+
+:global(.dark-mode .artifact-preview-title > span) {
+  color: #b8bfd0;
+}
+
+:global(.dark-mode .artifact-selector button:hover),
+:global(.dark-mode .artifact-selector button.active) {
+  border-color: rgba(117, 145, 255, 0.32);
+  background: rgba(91, 123, 255, 0.1);
+}
+
+:global(.dark-mode .artifact-actions a) {
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #c4cad8;
+}
+
+:global(.dark-mode .artifact-actions a:first-child) {
+  border-color: #4d5b80;
+  background: #4d5b80;
+  color: white;
+}
+
+:global(.dark-mode .trace-item::after) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+:global(.dark-mode .trace-marker) {
+  background: rgba(255, 255, 255, 0.07);
+  color: #b7bece;
+}
+
+:global(.dark-mode .trace-text .trace-marker) {
+  background: #4a5570;
+  color: white;
 }
 
 :global(.dark-mode .capability-card),
