@@ -1190,6 +1190,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { getAvatarUrl, getToken, getUser, setUser } from '@lib/auth';
 import { normalizeAgentMarkdown, wrapMarkdownTables } from '@lib/agentMarkdown.mjs';
 import { artifactFromToolResult } from '@lib/artifactResults.mjs';
+import { snapshotConfirmation } from '@lib/confirmationState.mjs';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
@@ -2500,8 +2501,10 @@ async function persistTaskStatus(status: 'paused' | 'cancelled') {
 
 async function resolvePendingConfirmation(decision: 'approve' | 'reject') {
   if (!pendingConfirmation.value || !sessionId.value || confirmationSaving.value) return;
+  const confirmationSnapshot = snapshotConfirmation(pendingConfirmation.value);
+  if (!confirmationSnapshot) return;
   confirmationSaving.value = true;
-  const confirmationId = pendingConfirmation.value.confirmationId;
+  const confirmationId = confirmationSnapshot.confirmationId;
   try {
     const response = await fetch(
       `/api/psychological-chat/session/${encodeURIComponent(sessionId.value)}/confirmation`,
@@ -2519,7 +2522,7 @@ async function resolvePendingConfirmation(decision: 'approve' | 'reject') {
       event => event.type === 'confirmation' && event.confirmationId === confirmationId,
     );
     if (confirmation) confirmation.status = decision === 'approve' ? 'done' : 'cancelled';
-    for (const action of pendingConfirmation.value.actions) {
+    for (const action of confirmationSnapshot.actions) {
       const toolEvent = toolEvents.value.find(item => item.callId === action.callId);
       if (toolEvent) toolEvent.status = decision === 'approve' ? 'running' : 'cancelled';
     }
