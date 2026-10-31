@@ -984,7 +984,9 @@ const articleError = ref('');
 const articleSearch = ref('');
 const articleUpdatedAt = ref<Date | null>(null);
 const textZoomLevels = [0.9, 1, 1.1, 1.2, 1.3];
-const textZoomIndex = ref(1);
+const DEFAULT_TEXT_ZOOM_INDEX = 4;
+const TEXT_ZOOM_STORAGE_KEY = 'workbench:textZoomIndex:v2';
+const textZoomIndex = ref(DEFAULT_TEXT_ZOOM_INDEX);
 const settingsSaving = ref(false);
 const settingsMessage = ref('');
 const avatarSaving = ref('');
@@ -1157,7 +1159,7 @@ const quickActions = [
 function applyTextZoom(index: number, persist = true) {
   const nextIndex = Math.min(textZoomLevels.length - 1, Math.max(0, index));
   textZoomIndex.value = nextIndex;
-  if (persist) localStorage.setItem('workbench:textZoomIndex', String(nextIndex));
+  if (persist) localStorage.setItem(TEXT_ZOOM_STORAGE_KEY, String(nextIndex));
 }
 
 function changeTextZoom(direction: number) {
@@ -1975,7 +1977,7 @@ onMounted(async () => {
     defaultAgentMode.value = savedMode;
     agentMode.value = savedMode;
   }
-  const savedZoom = localStorage.getItem('workbench:textZoomIndex');
+  const savedZoom = localStorage.getItem(TEXT_ZOOM_STORAGE_KEY);
   if (savedZoom !== null) {
     const savedIndex = Number.parseInt(savedZoom, 10);
     if (Number.isInteger(savedIndex) && savedIndex >= 0 && savedIndex < textZoomLevels.length) {
