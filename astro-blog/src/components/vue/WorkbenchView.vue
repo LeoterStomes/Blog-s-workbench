@@ -125,7 +125,10 @@
 
         <div class="nav-footer">
           <button type="button" class="account" @click="selectSection(navigation[3])">
-            <span class="account-avatar">{{ userInitial }}</span>
+            <span class="account-avatar">
+              <img v-if="userAvatarUrl" :src="userAvatarUrl" alt="" />
+              <template v-else>{{ userInitial }}</template>
+            </span>
             <span class="account-copy">
               <strong>{{ displayName }}</strong>
               <small>{{ loggedIn ? '个人工作区' : '尚未登录' }}</small>
@@ -237,13 +240,29 @@
                 :class="`event-${event.type}`"
               >
                 <div v-if="event.type === 'user'" class="event-user">
-                  <span class="event-avatar">你</span>
+                  <span class="event-avatar">
+                    <img v-if="userAvatarUrl" :src="userAvatarUrl" alt="" />
+                    <template v-else>你</template>
+                  </span>
                   <p>{{ event.content }}</p>
                 </div>
 
                 <div v-else-if="event.type === 'thinking'" class="event-thinking">
-                  <div class="event-label">{{ event.status === 'running' ? '正在分析任务' : '任务分析' }}</div>
-                  <p>{{ event.content }}</p>
+                  <button type="button" class="analysis-head" @click="analysisExpanded = !analysisExpanded">
+                    <span class="analysis-avatar">
+                      <img v-if="agentAvatar" :src="agentAvatar" alt="" />
+                      <template v-else>AI</template>
+                    </span>
+                    <span class="analysis-title">
+                      <strong>{{ event.status === 'running' ? '正在分析任务' : '任务分析' }}</strong>
+                      <small>{{ analysisExpanded ? '点击收起推理过程' : '点击展开推理过程' }}</small>
+                    </span>
+                    <span class="analysis-state" :class="{ running: event.status === 'running' }">
+                      <i />{{ event.status === 'running' ? '进行中' : '已完成' }}
+                    </span>
+                    <svg viewBox="0 0 24 24" :class="{ collapsed: !analysisExpanded }"><path d="M6 9l6 6 6-6" /></svg>
+                  </button>
+                  <div v-if="analysisExpanded" class="analysis-content agent-markdown" v-html="renderMarkdown(event.content || '')" />
                 </div>
 
                 <div v-else-if="event.type === 'artifact'" class="event-artifact">
@@ -252,7 +271,13 @@
                   <a :href="event.url" :download="event.content" target="_blank">下载</a>
                 </div>
 
-                <div v-else-if="event.type === 'text'" class="event-assistant agent-markdown" v-html="renderMarkdown(event.content || '')" />
+                <div v-else-if="event.type === 'text'" class="event-assistant-row">
+                  <span class="assistant-avatar">
+                    <img v-if="agentAvatar" :src="agentAvatar" alt="" />
+                    <template v-else>AI</template>
+                  </span>
+                  <div class="event-assistant agent-markdown" v-html="renderMarkdown(event.content || '')" />
+                </div>
 
                 <div v-else-if="event.type === 'error'" class="event-error">{{ event.content }}</div>
               </article>
@@ -289,6 +314,12 @@
               <span><strong>{{ articleTotal }}</strong> 篇已发布文章</span>
               <span>按发布时间从新到旧</span>
             </div>
+            <div class="article-search-bar">
+              <svg viewBox="0 0 24 24"><path d="M11 18a7 7 0 100-14 7 7 0 000 14zm5-2l5 5" /></svg>
+              <input v-model.trim="articleSearch" type="search" placeholder="搜索标题、摘要、分类或标签" />
+              <span v-if="articleSearch">{{ filteredBlogArticles.length }} 条结果</span>
+              <button v-if="articleSearch" type="button" title="清除搜索" @click="articleSearch = ''">清除</button>
+            </div>
 
             <div v-if="articleError" class="workspace-notice error">
               <span>{{ articleError }}</span>
@@ -296,8 +327,11 @@
             </div>
             <div v-else-if="articleLoading && blogArticles.length === 0" class="workspace-notice">正在读取博客文章...</div>
             <div v-else-if="blogArticles.length === 0" class="workspace-notice">博客里还没有已发布文章。</div>
+            <div v-else-if="filteredBlogArticles.length === 0" class="workspace-notice">
+              没有找到与“{{ articleSearch }}”匹配的文章。
+            </div>
             <div v-else class="article-stream" :class="{ refreshing: articleLoading }">
-              <article v-for="(article, index) in blogArticles" :key="article.id" class="article-stream-item">
+              <article v-for="(article, index) in filteredBlogArticles" :key="article.id" class="article-stream-item">
                 <button type="button" class="article-stream-open" @click="openBlogArticle(article)">
                   <span class="article-order">{{ String(index + 1).padStart(2, '0') }}</span>
                   <span class="article-thumb">
@@ -532,6 +566,47 @@
               <a href="/auth/login">去登录</a>
             </div>
             <div v-else class="settings-grid">
+              <section class="settings-card avatar-settings-card">
+                <div class="settings-card-head">
+                  <span>对话头像</span>
+                  <small>区分你与 Agent</small>
+                </div>
+                <div class="avatar-setting-grid">
+                  <div class="avatar-setting-item">
+                    <span class="avatar-preview user">
+                      <img v-if="userAvatarUrl" :src="userAvatarUrl" alt="" />
+                      <template v-else>{{ userInitial }}</template>
+                    </span>
+                    <span class="avatar-setting-copy">
+                      <strong>我的头像</strong>
+                      <small>同步到账号和聊天消息</small>
+                      <label class="avatar-upload-button">
+                        {{ avatarSaving === 'user' ? '上传中...' : '上传或更换' }}
+                        <input type="file" accept="image/png,image/jpeg,image/webp" :disabled="!!avatarSaving" @change="uploadUserAvatar" />
+                      </label>
+                    </span>
+                  </div>
+                  <div class="avatar-setting-item">
+                    <span class="avatar-preview agent">
+                      <img v-if="agentAvatar" :src="agentAvatar" alt="" />
+                      <template v-else>AI</template>
+                    </span>
+                    <span class="avatar-setting-copy">
+                      <strong>Agent 头像</strong>
+                      <small>用于分析卡和回复消息</small>
+                      <span class="avatar-setting-actions">
+                        <label class="avatar-upload-button">
+                          {{ avatarSaving === 'agent' ? '处理中...' : '上传或更换' }}
+                          <input type="file" accept="image/png,image/jpeg,image/webp" :disabled="!!avatarSaving" @change="uploadAgentAvatar" />
+                        </label>
+                        <button v-if="agentAvatar" type="button" @click="clearAgentAvatar">恢复默认</button>
+                      </span>
+                    </span>
+                  </div>
+                </div>
+                <p v-if="avatarError" class="avatar-error">{{ avatarError }}</p>
+              </section>
+
               <form class="settings-card" @submit.prevent="saveSettings">
                 <div class="settings-card-head">
                   <span>账号资料</span>
@@ -771,7 +846,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
-import { getToken, getUser, setUser } from '@lib/auth';
+import { getAvatarUrl, getToken, getUser, setUser } from '@lib/auth';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
@@ -906,11 +981,16 @@ const blogArticles = ref<BlogArticle[]>([]);
 const articleTotal = ref(0);
 const articleLoading = ref(false);
 const articleError = ref('');
+const articleSearch = ref('');
 const articleUpdatedAt = ref<Date | null>(null);
 const textZoomLevels = [0.9, 1, 1.1, 1.2, 1.3];
 const textZoomIndex = ref(1);
 const settingsSaving = ref(false);
 const settingsMessage = ref('');
+const avatarSaving = ref('');
+const avatarError = ref('');
+const agentAvatar = ref('');
+const analysisExpanded = ref(true);
 const settingsForm = ref({
   nickname: '',
   email: '',
@@ -922,6 +1002,8 @@ let articlePollTimer: number | null = null;
 
 const displayName = computed(() => user.value?.nickname || user.value?.username || '访客');
 const userInitial = computed(() => displayName.value.slice(0, 1).toUpperCase());
+const userAvatarUrl = computed(() => getAvatarUrl(user.value?.avatar));
+const agentAvatarStorageKey = computed(() => `workbench:agentAvatar:${user.value?.id || 'guest'}`);
 const isRunning = computed(() => taskStatus.value === 'connecting' || taskStatus.value === 'running');
 const toolEvents = computed(() => taskEvents.value.filter(event => event.type === 'tool'));
 const artifacts = computed(() => taskEvents.value.filter(event => event.type === 'artifact'));
@@ -980,6 +1062,16 @@ const articleSyncLabel = computed(() => {
     minute: '2-digit',
   }).format(articleUpdatedAt.value);
   return `已同步 ${time}`;
+});
+const filteredBlogArticles = computed(() => {
+  const query = articleSearch.value.toLowerCase();
+  if (!query) return blogArticles.value;
+  return blogArticles.value.filter(article => [
+    article.title,
+    article.summary || '',
+    article.categoryName || '',
+    article.tags || '',
+  ].some(value => value.toLowerCase().includes(query)));
 });
 const filteredCapabilities = computed(() => {
   const query = capabilitySearch.value.toLowerCase();
@@ -1722,6 +1814,74 @@ function setDefaultAgentMode(mode: AgentMode) {
   localStorage.setItem('workbench:defaultAgentMode', mode);
 }
 
+async function uploadUserAvatar(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  avatarSaving.value = 'user';
+  avatarError.value = '';
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const response = await fetch('/api/file/simple/upload/image', {
+      method: 'POST',
+      headers: { token: getToken() || '' },
+      body: form,
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.code !== '200') {
+      throw new Error(payload.detail || payload.msg || '头像上传失败');
+    }
+    const nextUser = { ...getUser()!, avatar: payload.data.url };
+    setUser(nextUser);
+    user.value = nextUser;
+  } catch (error) {
+    avatarError.value = error instanceof Error ? error.message : '头像上传失败';
+  } finally {
+    avatarSaving.value = '';
+    input.value = '';
+  }
+}
+
+async function avatarFileToDataUrl(file: File) {
+  if (!file.type.startsWith('image/')) throw new Error('请选择图片文件');
+  if (file.size > 5 * 1024 * 1024) throw new Error('头像图片不能超过 5 MB');
+  const bitmap = await createImageBitmap(file);
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('浏览器不支持头像处理');
+  const sourceSize = Math.min(bitmap.width, bitmap.height);
+  const sourceX = (bitmap.width - sourceSize) / 2;
+  const sourceY = (bitmap.height - sourceSize) / 2;
+  context.drawImage(bitmap, sourceX, sourceY, sourceSize, sourceSize, 0, 0, 128, 128);
+  bitmap.close();
+  return canvas.toDataURL('image/webp', 0.84);
+}
+
+async function uploadAgentAvatar(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  avatarSaving.value = 'agent';
+  avatarError.value = '';
+  try {
+    agentAvatar.value = await avatarFileToDataUrl(file);
+    localStorage.setItem(agentAvatarStorageKey.value, agentAvatar.value);
+  } catch (error) {
+    avatarError.value = error instanceof Error ? error.message : 'Agent 头像处理失败';
+  } finally {
+    avatarSaving.value = '';
+    input.value = '';
+  }
+}
+
+function clearAgentAvatar() {
+  agentAvatar.value = '';
+  localStorage.removeItem(agentAvatarStorageKey.value);
+}
+
 async function saveSettings() {
   settingsSaving.value = true;
   settingsMessage.value = '';
@@ -1822,6 +1982,7 @@ onMounted(async () => {
       applyTextZoom(savedIndex, false);
     }
   }
+  agentAvatar.value = localStorage.getItem(agentAvatarStorageKey.value) || '';
   settingsForm.value = {
     nickname: user.value?.nickname || '',
     email: user.value?.email || '',
@@ -2494,6 +2655,17 @@ onUnmounted(() => {
   color: var(--wb-blue-deep);
   font-size: calc(var(--wb-font-scale) * 11px);
   font-weight: 800;
+  overflow: hidden;
+}
+
+.account-avatar img,
+.event-avatar img,
+.assistant-avatar img,
+.analysis-avatar img,
+.avatar-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .account-copy {
@@ -2998,19 +3170,103 @@ onUnmounted(() => {
   order: 2;
   background: rgba(91, 123, 255, 0.1);
   color: var(--wb-blue-deep);
+  overflow: hidden;
 }
 
 .event-thinking {
-  max-width: min(760px, 92%);
-  padding: 11px 13px;
+  max-width: min(820px, 94%);
+  overflow: hidden;
   border: 1px solid var(--wb-line);
-  border-radius: 12px;
-  background: rgba(248, 249, 253, 0.7);
+  border-radius: 14px;
+  background:
+    linear-gradient(145deg, rgba(91, 123, 255, 0.045), transparent 60%),
+    rgba(248, 249, 253, 0.78);
 }
 
-.event-symbol {
-  background: rgba(91, 123, 255, 0.09);
+.analysis-head {
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.analysis-avatar {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: rgba(91, 123, 255, 0.1);
   color: var(--wb-blue-deep);
+  font-size: calc(var(--wb-font-scale) * 8px);
+  font-weight: 750;
+}
+
+.analysis-title {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+}
+
+.analysis-title strong {
+  color: #5a6176;
+  font-size: calc(var(--wb-font-scale) * 9px);
+}
+
+.analysis-title small {
+  color: #a0a5b3;
+  font-size: calc(var(--wb-font-scale) * 7px);
+}
+
+.analysis-state {
+  padding: 3px 6px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(34, 197, 94, 0.07);
+  color: #438064;
+  font-size: calc(var(--wb-font-scale) * 7px);
+}
+
+.analysis-state i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--wb-green);
+}
+
+.analysis-state.running {
+  background: rgba(91, 123, 255, 0.08);
+  color: var(--wb-blue-deep);
+}
+
+.analysis-state.running i {
+  background: var(--wb-blue);
+  animation: tool-pulse 1.2s ease-in-out infinite;
+}
+
+.analysis-head > svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: #9399aa;
+  stroke-width: 1.8;
+  transition: transform 170ms ease;
+}
+
+.analysis-head > svg.collapsed {
+  transform: rotate(-90deg);
 }
 
 .event-label {
@@ -3019,12 +3275,37 @@ onUnmounted(() => {
   font-weight: 650;
 }
 
-.event-thinking p {
-  margin: 5px 0 0;
+.analysis-content {
+  max-height: 360px;
+  padding: 0 14px 13px 47px;
+  overflow-y: auto;
   color: #8f95a6;
   font-size: calc(var(--wb-font-scale) * 9px);
   line-height: 1.65;
-  white-space: pre-wrap;
+}
+
+.analysis-content :deep(p) {
+  margin: 0.45em 0;
+}
+
+.analysis-content :deep(ul),
+.analysis-content :deep(ol) {
+  margin: 0.5em 0;
+  padding-left: 18px;
+}
+
+.analysis-content :deep(h1),
+.analysis-content :deep(h2),
+.analysis-content :deep(h3) {
+  margin: 0.75em 0 0.35em;
+  color: #697086;
+  font-size: calc(var(--wb-font-scale) * 10px);
+}
+
+.analysis-content :deep(code) {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(91, 123, 255, 0.07);
 }
 
 .event-tool {
@@ -3078,8 +3359,30 @@ onUnmounted(() => {
   font-size: calc(var(--wb-font-scale) * 8px);
 }
 
+.event-assistant-row {
+  max-width: min(820px, 94%);
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.assistant-avatar {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: rgba(91, 123, 255, 0.1);
+  color: var(--wb-blue-deep);
+  font-size: calc(var(--wb-font-scale) * 8px);
+  font-weight: 750;
+}
+
 .event-assistant {
-  max-width: 86%;
+  min-width: 0;
+  flex: 1;
   padding: 13px 15px;
   border: 1px solid rgba(103, 111, 141, 0.1);
   border-radius: 4px 15px 15px 15px;
@@ -3298,6 +3601,53 @@ onUnmounted(() => {
   margin-right: 4px;
   color: var(--wb-blue-deep);
   font-size: calc(var(--wb-font-scale) * 13px);
+}
+
+.article-search-bar {
+  height: 34px;
+  margin-top: 10px;
+  padding: 0 9px;
+  border: 1px solid var(--wb-line);
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.article-search-bar svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: #969cad;
+  stroke-width: 1.8;
+}
+
+.article-search-bar input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #555c70;
+  font: inherit;
+  font-size: calc(var(--wb-font-scale) * 9px);
+}
+
+.article-search-bar span {
+  color: var(--wb-blue-deep);
+  font-size: calc(var(--wb-font-scale) * 8px);
+  white-space: nowrap;
+}
+
+.article-search-bar button {
+  border: 0;
+  background: transparent;
+  color: #969cad;
+  font: inherit;
+  font-size: calc(var(--wb-font-scale) * 8px);
+  cursor: pointer;
 }
 
 .article-stream {
@@ -4308,6 +4658,102 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.68);
 }
 
+.avatar-settings-card {
+  grid-column: 1 / -1;
+}
+
+.avatar-setting-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.avatar-setting-item {
+  padding: 12px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(239, 242, 248, 0.65);
+}
+
+.avatar-preview {
+  width: 54px;
+  height: 54px;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: rgba(91, 123, 255, 0.1);
+  color: var(--wb-blue-deep);
+  font-size: calc(var(--wb-font-scale) * 16px);
+  font-weight: 750;
+}
+
+.avatar-preview.agent {
+  background:
+    radial-gradient(circle at 70% 20%, rgba(91, 123, 255, 0.2), transparent 45%),
+    rgba(23, 27, 46, 0.92);
+  color: white;
+}
+
+.avatar-setting-copy {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 3px;
+}
+
+.avatar-setting-copy strong {
+  color: #535a6e;
+  font-size: calc(var(--wb-font-scale) * 9px);
+}
+
+.avatar-setting-copy small {
+  color: #9ca2b0;
+  font-size: calc(var(--wb-font-scale) * 8px);
+}
+
+.avatar-upload-button {
+  width: fit-content;
+  margin-top: 4px;
+  padding: 5px 8px;
+  border: 1px solid var(--wb-line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.7);
+  color: #666e82;
+  font-size: calc(var(--wb-font-scale) * 8px);
+  cursor: pointer;
+}
+
+.avatar-upload-button input {
+  display: none;
+}
+
+.avatar-setting-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.avatar-setting-actions > button {
+  margin-top: 4px;
+  padding: 5px 6px;
+  border: 0;
+  background: transparent;
+  color: #a0a5b3;
+  font: inherit;
+  font-size: calc(var(--wb-font-scale) * 8px);
+  cursor: pointer;
+}
+
+.avatar-error {
+  margin: 10px 0 0;
+  color: #c64040;
+  font-size: calc(var(--wb-font-scale) * 8px);
+}
+
 .settings-card-head {
   margin-bottom: 14px;
   display: flex;
@@ -5296,6 +5742,10 @@ onUnmounted(() => {
   .settings-grid {
     grid-template-columns: 1fr;
   }
+
+  .avatar-setting-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 590px) {
@@ -5557,6 +6007,18 @@ onUnmounted(() => {
   border-color: rgba(255, 255, 255, 0.08);
   background: rgba(18, 21, 32, 0.9);
   color: #dfe3ef;
+}
+
+:global(.dark-mode .event-thinking),
+:global(.dark-mode .event-assistant),
+:global(.dark-mode .avatar-setting-item),
+:global(.dark-mode .article-search-bar) {
+  background: rgba(31, 35, 49, 0.86);
+}
+
+:global(.dark-mode .analysis-title strong),
+:global(.dark-mode .avatar-setting-copy strong) {
+  color: #e7eaf3;
 }
 
 @media (prefers-reduced-motion: reduce) {

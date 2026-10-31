@@ -250,6 +250,17 @@ async function captureQaScreenshot() {
     );
     await new Promise(resolveWait => setTimeout(resolveWait, 500));
   }
+  const qaArticleSearch = process.env.WORKBENCH_QA_ARTICLE_SEARCH;
+  if (qaArticleSearch) {
+    await mainWindow.webContents.executeJavaScript(`(() => {
+      const input = document.querySelector('.article-search-bar input');
+      if (!input) return false;
+      input.value = ${JSON.stringify(qaArticleSearch)};
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()`, true);
+    await new Promise(resolveWait => setTimeout(resolveWait, 500));
+  }
   if (process.env.WORKBENCH_QA_OPEN_FIRST_CAPABILITY === '1') {
     await mainWindow.webContents.executeJavaScript(
       "document.querySelector('.capability-card-actions button')?.click()",
@@ -385,7 +396,9 @@ async function captureQaScreenshot() {
     recentDeleteButtons: document.querySelectorAll('.recent-task-delete').length,
     assetNotice: document.querySelector('.assets-view .workspace-notice')?.textContent?.trim() || '',
     settingsVisible: !!document.querySelector('.settings-view'),
+    avatarSettingsVisible: !!document.querySelector('.avatar-settings-card'),
     articleRows: document.querySelectorAll('.article-stream-item').length,
+    articleSearchValue: document.querySelector('.article-search-bar input')?.value || '',
     articleCoverSrc: document.querySelector('.article-thumb img')?.getAttribute('src') || '',
     articleTotalLabel: document.querySelector('.article-feed-summary')?.textContent?.trim() || '',
     articleError: document.querySelector('.article-feed-view .workspace-notice.error')?.textContent?.trim() || '',
