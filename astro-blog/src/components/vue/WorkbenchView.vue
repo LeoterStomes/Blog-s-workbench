@@ -233,21 +233,11 @@
               aria-live="polite"
               @scroll.passive="handleTaskFeedScroll"
             >
-              <article
+              <template
                 v-for="event in visibleTaskEvents"
                 :key="event.id"
-                class="task-event"
-                :class="`event-${event.type}`"
               >
-                <div v-if="event.type === 'user'" class="event-user">
-                  <span class="event-avatar">
-                    <img v-if="userAvatarUrl" :src="userAvatarUrl" alt="" />
-                    <template v-else>你</template>
-                  </span>
-                  <p>{{ event.content }}</p>
-                </div>
-
-                <div v-else-if="event.type === 'thinking'" class="event-thinking">
+                <section v-if="event.type === 'thinking'" class="thinking-panel">
                   <button type="button" class="thinking-toggle" @click="analysisExpanded = !analysisExpanded">
                     <span class="thinking-label">
                       <i :class="{ running: event.status === 'running' }" />
@@ -257,6 +247,15 @@
                     <svg viewBox="0 0 24 24" :class="{ collapsed: !analysisExpanded }"><path d="M6 9l6 6 6-6" /></svg>
                   </button>
                   <div v-if="analysisExpanded" class="analysis-content agent-markdown" v-html="renderMarkdown(event.content || '')" />
+                </section>
+
+                <article v-else class="task-event" :class="`event-${event.type}`">
+                <div v-if="event.type === 'user'" class="event-user">
+                  <span class="event-avatar">
+                    <img v-if="userAvatarUrl" :src="userAvatarUrl" alt="" />
+                    <template v-else>你</template>
+                  </span>
+                  <p>{{ event.content }}</p>
                 </div>
 
                 <div v-else-if="event.type === 'artifact'" class="event-artifact">
@@ -274,7 +273,8 @@
                 </div>
 
                 <div v-else-if="event.type === 'error'" class="event-error">{{ event.content }}</div>
-              </article>
+                </article>
+              </template>
 
               <div v-if="isRunning" class="stream-pulse">
                 <span /><span /><span />
@@ -2657,7 +2657,6 @@ onUnmounted(() => {
 .account-avatar img,
 .event-avatar img,
 .assistant-avatar img,
-.analysis-avatar img,
 .avatar-preview img {
   width: 100%;
   height: 100%;
@@ -3169,14 +3168,17 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-.event-thinking {
+.thinking-panel {
+  width: 100%;
   max-width: min(820px, 94%);
+  margin-bottom: 12px;
   overflow: hidden;
   border: 1px solid var(--wb-line);
   border-radius: 14px;
   background:
     linear-gradient(145deg, rgba(91, 123, 255, 0.045), transparent 60%),
     rgba(248, 249, 253, 0.78);
+  animation: event-enter 220ms ease-out both;
 }
 
 .thinking-toggle {
@@ -5978,7 +5980,7 @@ onUnmounted(() => {
   color: #dfe3ef;
 }
 
-:global(.dark-mode .event-thinking),
+:global(.dark-mode .thinking-panel),
 :global(.dark-mode .event-assistant),
 :global(.dark-mode .avatar-setting-item),
 :global(.dark-mode .article-search-bar) {

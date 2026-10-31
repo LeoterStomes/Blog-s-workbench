@@ -6,6 +6,10 @@ const workbenchCss = readdirSync(cssDir)
   .filter(name => name.startsWith('WorkbenchView.') && name.endsWith('.css'))
   .map(name => readFileSync(join(cssDir, name), 'utf8'))
   .join('\n');
+const workbenchJs = readdirSync(cssDir)
+  .filter(name => name.startsWith('WorkbenchView.') && name.endsWith('.js'))
+  .map(name => readFileSync(join(cssDir, name), 'utf8'))
+  .join('\n');
 
 if (/body\.app-chromeless\s*\{[^}]*display\s*:\s*none/i.test(workbenchCss)) {
   throw new Error('Scoped CSS incorrectly hides body.app-chromeless');
@@ -25,6 +29,10 @@ if (!/\.workbench-main(?:\s|\[|:)[^{]*\{[^}]*min-height\s*:\s*0/i.test(workbench
 
 if (!/\.task-feed(?:\s|\[|:)[^{]*\{[^}]*overscroll-behavior\s*:\s*contain/i.test(workbenchCss)) {
   throw new Error('Task feed must own wheel scrolling inside the chat area');
+}
+
+if (workbenchJs.includes('event-thinking')) {
+  throw new Error('Thinking events must not reuse the generic task-event wrapper');
 }
 
 console.log('Workbench CSS scope check passed');

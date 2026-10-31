@@ -261,6 +261,18 @@ async function captureQaScreenshot() {
     })()`, true);
     await new Promise(resolveWait => setTimeout(resolveWait, 500));
   }
+  const qaSubmitPrompt = process.env.WORKBENCH_QA_SUBMIT_PROMPT;
+  if (qaSubmitPrompt) {
+    await mainWindow.webContents.executeJavaScript(`(() => {
+      const input = document.querySelector('.composer textarea');
+      if (!input) return false;
+      input.value = ${JSON.stringify(qaSubmitPrompt)};
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.form?.requestSubmit();
+      return true;
+    })()`, true);
+    await new Promise(resolveWait => setTimeout(resolveWait, 8000));
+  }
   if (process.env.WORKBENCH_QA_OPEN_FIRST_CAPABILITY === '1') {
     await mainWindow.webContents.executeJavaScript(
       "document.querySelector('.capability-card-actions button')?.click()",
@@ -402,7 +414,8 @@ async function captureQaScreenshot() {
     articleCoverSrc: document.querySelector('.article-thumb img')?.getAttribute('src') || '',
     articleTotalLabel: document.querySelector('.article-feed-summary')?.textContent?.trim() || '',
     articleError: document.querySelector('.article-feed-view .workspace-notice.error')?.textContent?.trim() || '',
-    analysisCards: document.querySelectorAll('.event-thinking').length,
+    analysisCards: document.querySelectorAll('.thinking-panel').length,
+    legacyThinkingCards: document.querySelectorAll('article.task-event.event-thinking').length,
     toolCards: document.querySelectorAll('.event-tool').length,
     contextSourcesVisible: !!document.querySelector('.context-collapsible'),
     contextFoldLabel: document.querySelector('.context-fold-button')?.textContent?.trim() || '',
