@@ -280,7 +280,7 @@ def _submit_capability_draft(db, args, user_id=None):
         return json.dumps({"error": "kind 必须为 skill/mcp/prompt，且 name 不能为空"}, ensure_ascii=False)
 
     from models import CapabilityAsset, User
-    from services.prompt_builder import _parse_frontmatter, _parse_skill
+    from services.capability_document import parse_capability_document
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user or user.user_type != 2:
@@ -308,25 +308,22 @@ def _submit_capability_draft(db, args, user_id=None):
 
     if kind in {"skill", "prompt"} and not content:
         return json.dumps({"error": f"{kind} 草稿必须提供 content"}, ensure_ascii=False)
-    if kind == "prompt":
-        meta, _ = _parse_frontmatter(content)
+    if kind in {"prompt", "skill"}:
+        parsed = parse_capability_document(content, kind, name)
+        content = parsed["body"]
         config.update({
-            "triggers": meta.get("triggers", []),
-            "tools": meta.get("tools", []),
-            "links": meta.get("links", []),
-            "always": bool(meta.get("always")),
+            "triggers": parsed["triggers"],
+            "tools": parsed["tools"],
+            "links": parsed["links"],
+            "always": parsed["always"],
+            "version": parsed["version"],
+            "license": parsed["license"],
+            "metadata": parsed["metadata"],
+            "source_format": "yaml" if parsed["has_frontmatter"] else "legacy",
         })
-        description = description or str(meta.get("description", "")).strip()
-        category = str(meta.get("category", "")).strip() or category
-    elif kind == "skill":
-        parsed = _parse_skill(content, name)
-        config.update({
-            "triggers": parsed.get("triggers", []),
-            "tools": parsed.get("tools", []),
-            "links": parsed.get("links", []),
-        })
-        description = description or parsed.get("description", "")
-        category = parsed.get("category") or category
+        description = description or parsed["description"]
+        if category == "自定义":
+            category = parsed["category"] or category
     elif kind == "mcp":
         target = config.get("mcpServers", {}).get(name, config) if isinstance(config, dict) else {}
         if not target.get("url") and not target.get("command"):

@@ -11,6 +11,8 @@
 import re
 from pathlib import Path
 
+from services.capability_document import extract_frontmatter, parse_capability_document
+
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 _SKILLS_DIR = Path(__file__).parent.parent / "skills"
 
@@ -21,57 +23,12 @@ _always_prompts: list[str] = []
 
 def _parse_frontmatter(text: str) -> tuple[dict, str]:
     """解析 YAML 元数据头（--- ... ---），返回 (meta, body)"""
-    meta, body = {}, text
-    if text.startswith("---"):
-        parts = text.split("---", 2)
-        if len(parts) >= 3:
-            import yaml
-            try:
-                meta = yaml.safe_load(parts[1]) or {}
-            except Exception:
-                pass
-            body = parts[2].strip()
-    return meta, body
+    return extract_frontmatter(text)
 
 
 def _parse_skill(text: str, stem: str) -> dict:
-    """解析 .skill 文件：# 标题作为名称，## trigger 段作为触发词，## description 段作为一句话说明"""
-    name = stem
-    m = re.search(r"^#\s+(.+)$", text, re.M)
-    if m:
-        name = m.group(1).strip()
-    triggers: list[str] = []
-    tm = re.search(r"^##\s*trigger\s*\n(.*?)(?=^##\s|\Z)", text, re.M | re.S)
-    if tm:
-        triggers = [t.strip() for t in re.split(r"[、,，/\n]+", tm.group(1)) if t.strip()]
-    description = ""
-    dm = re.search(r"^##\s*description\s*\n(.*?)(?=^##\s|\Z)", text, re.M | re.S)
-    if dm:
-        description = dm.group(1).strip()
-    tools: list[str] = []
-    tool_match = re.search(r"^##\s*tools\s*\n(.*?)(?=^##\s|\Z)", text, re.M | re.S)
-    if tool_match:
-        tools = re.findall(r"`([^`]+)`", tool_match.group(1))
-    links: list[str] = []
-    link_match = re.search(r"^##\s*links\s*\n(.*?)(?=^##\s|\Z)", text, re.M | re.S)
-    if link_match:
-        links = [
-            line.lstrip("- ").strip()
-            for line in link_match.group(1).splitlines()
-            if line.strip().startswith("-")
-        ]
-    category_match = re.search(r"^##\s*category\s*\n(.*?)(?=^##\s|\Z)", text, re.M | re.S)
-    category = category_match.group(1).strip() if category_match else ""
-    return {
-        "name": name,
-        "stem": stem,
-        "body": text.strip(),
-        "triggers": triggers,
-        "description": description,
-        "tools": tools,
-        "links": links,
-        "category": category,
-    }
+    """Parse YAML SKILL.md and legacy .skill heading sections."""
+    return parse_capability_document(text, "skill", stem)
 
 
 def load_all():

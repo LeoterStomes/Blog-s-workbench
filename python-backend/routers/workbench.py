@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,8 +10,8 @@ from auth import get_current_user_id
 from database import get_db
 from models import CapabilityAsset, User
 from services.asset_service import list_assets, set_capability_enabled
+from services.capability_document import detect_capability_kind, parse_capability_document
 from services.mcp_client import activate_mcp_server
-from services.prompt_builder import _parse_frontmatter, _parse_skill
 
 
 router = APIRouter(prefix="/api/workbench", tags=["内容工作台"])
@@ -25,6 +26,12 @@ class CapabilityImportBody(BaseModel):
     config: dict = Field(default_factory=dict)
 
 
+class CapabilityInspectBody(BaseModel):
+    kind: Literal["skill", "mcp", "prompt", "auto"] = "auto"
+    filename: str = Field(default="", max_length=255)
+    content: str = ""
+
+
 class CapabilityToggleBody(BaseModel):
     enabled: bool
 
@@ -33,6 +40,69 @@ def _require_admin(db: Session, user_id: int):
     user = db.query(User).filter(User.id == user_id).first()
     if not user or user.user_type != 2:
         raise HTTPException(status_code=403, detail="仅管理员可以导入或删除能力资产")
+
+
+def _inspect_mcp(content: str, filename: str) -> dict:
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="MCP 配置必须是有效 JSON") from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=400, detail="MCP 配置必须是 JSON 对象")
+    servers = parsed.get("mcpServers")
+    if isinstance(servers, dict) and servers:
+        name = next(iter(servers))
+        target = servers[name]
+    else:
+        name = Path(filename or "mcp").stem or "mcp"
+        target = parsed
+    if not isinstance(target, dict) or not (target.get("url") or target.get("command")):
+        raise HTTPException(status_code=400, detail="MCP 配置必须包含 url 或 command")
+    return {
+        "kind": "mcp",
+        "name": name,
+        "description": f"MCP 外部连接 · {len(target.get('tools', [])) if isinstance(target.get('tools'), list) else 0} 个工具",
+        "category": "外部连接",
+        "triggers": [],
+        "tools": target.get("tools", []),
+        "links": [],
+        "always": False,
+        "version": "1",
+        "license": "",
+        "metadata": {},
+        "config": parsed,
+    }
+
+
+@router.post("/assets/inspect")
+def inspect_asset(
+    body: CapabilityInspectBody,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    _require_admin(db, user_id)
+    kind = detect_capability_kind(body.filename, body.content, body.kind)
+    if kind == "mcp":
+        return {"code": "200", "msg": "ok", "data": _inspect_mcp(body.content, body.filename)}
+    stem = Path(body.filename or kind).stem or kind
+    parsed = parse_capability_document(body.content, kind, stem)
+    return {
+        "code": "200",
+        "msg": "ok",
+        "data": {
+            **parsed,
+            "config": {
+                "triggers": parsed["triggers"],
+                "tools": parsed["tools"],
+                "links": parsed["links"],
+                "always": parsed["always"],
+                "version": parsed["version"],
+                "license": parsed["license"],
+                "metadata": parsed["metadata"],
+                "source_format": "yaml" if parsed["has_frontmatter"] else "legacy",
+            },
+        },
+    }
 
 
 @router.get("/assets")
@@ -58,25 +128,24 @@ def import_asset(
         raise HTTPException(status_code=400, detail="Skill 或 Prompt 内容不能为空")
     parsed_description = body.description.strip()
     parsed_category = body.category.strip() or "自定义"
-    if body.kind == "prompt":
-        meta, _ = _parse_frontmatter(content)
+    if body.kind in {"skill", "prompt"}:
+        parsed = parse_capability_document(content, body.kind, name)
+        if name.lower() in {"", "skill", "skill.md"}:
+            name = parsed["name"] or name
+        content = parsed["body"]
+        parsed_description = parsed_description or parsed["description"]
+        if parsed_category == "自定义":
+            parsed_category = parsed["category"] or parsed_category
         config.update({
-            "triggers": meta.get("triggers", []),
-            "tools": meta.get("tools", []),
-            "links": meta.get("links", []),
-            "always": bool(meta.get("always")),
+            "triggers": parsed["triggers"],
+            "tools": parsed["tools"],
+            "links": parsed["links"],
+            "always": parsed["always"],
+            "version": parsed["version"],
+            "license": parsed["license"],
+            "metadata": parsed["metadata"],
+            "source_format": "yaml" if parsed["has_frontmatter"] else "legacy",
         })
-        parsed_description = parsed_description or str(meta.get("description", "")).strip()
-        parsed_category = str(meta.get("category", "")).strip() or parsed_category
-    elif body.kind == "skill":
-        parsed = _parse_skill(content, name)
-        config.update({
-            "triggers": parsed.get("triggers", []),
-            "tools": parsed.get("tools", []),
-            "links": parsed.get("links", []),
-        })
-        parsed_description = parsed_description or parsed.get("description", "")
-        parsed_category = parsed.get("category") or parsed_category
     if body.kind == "mcp":
         target = config.get("mcpServers", {}).get(name, config) if isinstance(config, dict) else {}
         if not target.get("url") and not target.get("command"):
@@ -100,7 +169,8 @@ def import_asset(
         )
         db.add(row)
     row.category = parsed_category
-    row.description = parsed_description or content[:180]
+    row.description = (parsed_description or content[:180])[:600]
+    row.category = parsed_category[:80]
     row.content = content
     row.config_json = json.dumps(config, ensure_ascii=False)
     row.status = 1

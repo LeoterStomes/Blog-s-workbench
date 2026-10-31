@@ -8,7 +8,14 @@ from sqlalchemy.orm import sessionmaker
 
 from database import Base
 from models import CapabilityAsset, User
-from routers.workbench import CapabilityImportBody, CapabilityToggleBody, import_asset, toggle_asset
+from routers.workbench import (
+    CapabilityImportBody,
+    CapabilityInspectBody,
+    CapabilityToggleBody,
+    import_asset,
+    inspect_asset,
+    toggle_asset,
+)
 from services.agent_service import _submit_capability_draft
 from services.asset_service import (
     filter_enabled_mcp_tools,
@@ -36,6 +43,35 @@ class CapabilityLibraryTest(unittest.TestCase):
 
     def tearDown(self):
         self.db.close()
+
+    def test_inspect_detects_standard_skill_metadata_before_import(self):
+        content = """---
+name: humanizer
+description: Rewrite AI-sounding prose without changing facts.
+category: 写作规范
+triggers: [去 AI 味]
+tools: [get_article, update_article]
+license: MIT
+metadata:
+  version: "3.1.0"
+---
+# Humanizer
+
+Rewrite only the prose.
+"""
+        result = inspect_asset(
+            CapabilityInspectBody(kind="auto", filename="SKILL.md", content=content),
+            user_id=1,
+            db=self.db,
+        )
+        data = result["data"]
+
+        self.assertEqual(data["kind"], "skill")
+        self.assertEqual(data["name"], "humanizer")
+        self.assertEqual(data["triggers"], ["去 AI 味"])
+        self.assertEqual(data["config"]["version"], "3.1.0")
+        self.assertEqual(data["config"]["license"], "MIT")
+        self.assertNotIn("---\nname:", data["body"])
 
     @patch("services.asset_service.get_skill_catalog")
     @patch("services.asset_service.get_prompt_catalog")
@@ -138,6 +174,44 @@ Read and fix the draft.
 
         self.assertIn("Read and fix", imported_skill_body(self.db, 1, "proofreader"))
         self.assertIsNone(imported_skill_body(self.db, 2, "proofreader"))
+
+    @patch("services.asset_service.get_skill_catalog", return_value=[])
+    @patch("services.asset_service.get_prompt_catalog", return_value=[])
+    @patch("services.asset_service.get_mcp_catalog", return_value=[])
+    def test_standard_yaml_skill_import_preserves_metadata(self, *_mocks):
+        content = """---
+name: humanizer
+description: Rewrite AI-sounding prose without changing facts.
+category: 写作规范
+triggers: [去 AI 味, 润色文章]
+tools: [get_article, update_article]
+license: MIT
+metadata:
+  version: "3.1.0"
+---
+# Humanizer
+
+Rewrite only the prose.
+"""
+        import_asset(
+            CapabilityImportBody(
+                kind="skill",
+                name="humanizer",
+                content=content,
+            ),
+            user_id=1,
+            db=self.db,
+        )
+
+        catalog = list_assets(self.db, user_id=1)
+        imported = next(item for item in catalog["items"] if item["name"] == "humanizer")
+        assert imported["description"] == "Rewrite AI-sounding prose without changing facts."
+        assert imported["category"] == "写作规范"
+        assert imported["triggers"] == ["去 AI 味", "润色文章"]
+        assert imported["tools"] == ["get_article", "update_article"]
+        assert imported["config"]["license"] == "MIT"
+        assert imported["config"]["version"] == "3.1.0"
+        assert imported["content"].startswith("# Humanizer")
 
     @patch("services.asset_service.get_skill_catalog", return_value=[])
     @patch("services.asset_service.get_prompt_catalog", return_value=[])

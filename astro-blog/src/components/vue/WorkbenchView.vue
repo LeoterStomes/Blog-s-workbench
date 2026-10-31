@@ -487,6 +487,8 @@
                   <span>{{ capabilityDetail.tools.length }} 个工具映射</span>
                   <span>{{ capabilityDetail.triggers.length }} 个触发词</span>
                   <span>{{ capabilityDetail.links.length }} 个关联文档</span>
+                  <span v-if="capabilityDetail.config?.version">v{{ capabilityDetail.config.version }}</span>
+                  <span v-if="capabilityDetail.config?.license">{{ capabilityDetail.config.license }}</span>
                 </div>
                 <pre v-if="capabilityDetail.kind === 'mcp' || capabilityDetail.source === 'imported' && capabilityDetail.kind === 'mcp'">{{ capabilityConfigText(capabilityDetail) }}</pre>
                 <div v-else class="capability-document agent-markdown" v-html="renderMarkdown(capabilityDetail.content)" />
@@ -505,7 +507,7 @@
                   <div>
                     <span class="eyebrow">IMPORT CAPABILITY</span>
                     <h2>导入能力资产</h2>
-                    <p>支持 Skill、Prompt 和 MCP JSON 配置。</p>
+                    <p>支持标准 YAML SKILL.md、现有 .skill、Prompt 和 MCP JSON。</p>
                   </div>
                   <button type="button" class="capability-modal-close" @click="capabilityImportOpen = false">
                     <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>
@@ -517,7 +519,7 @@
                     :key="kind"
                     type="button"
                     :class="{ active: capabilityImportForm.kind === kind }"
-                    @click="capabilityImportForm.kind = kind"
+                    @click="setCapabilityImportKind(kind)"
                   >
                     {{ capabilityKindLabel(kind) }}
                   </button>
@@ -531,19 +533,32 @@
                   <span>从文件读取</span>
                   <input type="file" accept=".md,.skill,.json" @change="loadCapabilityFile" />
                 </label>
+                <div v-if="capabilityImportInspecting" class="capability-import-detected loading">
+                  <span>正在识别 YAML 与能力元数据…</span>
+                </div>
+                <div v-else-if="capabilityImportDetected" class="capability-import-detected">
+                  <span>{{ capabilityImportDetected.has_frontmatter ? 'YAML' : 'LEGACY' }}</span>
+                  <span v-if="capabilityImportDetected.version">v{{ capabilityImportDetected.version }}</span>
+                  <span v-if="capabilityImportDetected.license">{{ capabilityImportDetected.license }}</span>
+                  <span>{{ capabilityImportDetected.triggers.length }} 个触发词</span>
+                  <span>{{ capabilityImportDetected.tools.length }} 个工具</span>
+                </div>
                 <label>
                   {{ capabilityImportForm.kind === 'mcp' ? 'MCP JSON 配置' : '原始内容' }}
                   <textarea
                     v-model="capabilityImportForm.content"
                     placeholder="粘贴 Prompt、Skill 原始内容，或 MCP JSON 配置"
+                    @input="invalidateCapabilityInspection"
                     required
                   />
                 </label>
-                <p class="capability-import-note">Skill / Prompt 会按触发词与工具自动建立映射。MCP 配置只保存为待启用资产，不会自动执行外部命令。</p>
+                <p class="capability-import-note">YAML frontmatter 会自动映射名称、说明、分类、触发词、工具、版本和许可证；正文不会重复保存元数据。MCP 配置只保存为待启用资产，不会自动执行外部命令。</p>
                 <div v-if="capabilityImportError" class="capability-import-error">{{ capabilityImportError }}</div>
                 <footer class="capability-detail-foot">
                   <button type="button" @click="capabilityImportOpen = false">取消</button>
-                  <button type="submit" :disabled="capabilityImportSaving">{{ capabilityImportSaving ? '导入中...' : '导入到能力库' }}</button>
+                  <button type="submit" :disabled="capabilityImportSaving || capabilityImportInspecting">
+                    {{ capabilityImportInspecting ? '识别中...' : capabilityImportSaving ? '导入中...' : '导入到能力库' }}
+                  </button>
                 </footer>
               </form>
             </div>
@@ -1302,6 +1317,19 @@ interface CapabilityImportForm {
   content: string;
 }
 
+interface CapabilityInspectResult {
+  kind: CapabilityKind;
+  name: string;
+  category: string;
+  description: string;
+  triggers: string[];
+  tools: string[];
+  links: string[];
+  version: string;
+  license: string;
+  has_frontmatter?: boolean;
+}
+
 interface BlogArticle {
   id: string;
   title: string;
@@ -1369,6 +1397,9 @@ const capabilityDetail = ref<CapabilityItem | null>(null);
 const capabilityImportOpen = ref(false);
 const capabilityImportSaving = ref(false);
 const capabilityImportError = ref('');
+const capabilityImportInspecting = ref(false);
+const capabilityImportDetected = ref<CapabilityInspectResult | null>(null);
+const capabilityImportFilename = ref('');
 const capabilityImportKinds: CapabilityKind[] = ['skill', 'mcp', 'prompt'];
 const capabilityImportForm = ref<CapabilityImportForm>({
   kind: 'prompt',
@@ -2811,6 +2842,9 @@ async function toggleCapability(capability: CapabilityItem, event: Event) {
 
 function openCapabilityImport() {
   capabilityImportError.value = '';
+  capabilityImportInspecting.value = false;
+  capabilityImportDetected.value = null;
+  capabilityImportFilename.value = '';
   capabilityImportForm.value = {
     kind: 'prompt',
     name: '',
@@ -2826,12 +2860,66 @@ async function loadCapabilityFile(event: Event) {
   const file = input.files?.[0];
   if (!file) return;
   const ext = file.name.split('.').pop()?.toLowerCase();
-  capabilityImportForm.value.kind = ext === 'json' ? 'mcp' : ext === 'skill' ? 'skill' : 'prompt';
-  capabilityImportForm.value.content = await file.text();
-  if (!capabilityImportForm.value.name) {
-    capabilityImportForm.value.name = file.name.replace(/\.(md|skill|json)$/i, '');
-  }
+  const isSkillFile = ext === 'skill' || file.name.toLowerCase() === 'skill.md';
+  const requestedKind: CapabilityKind | 'auto' = ext === 'json'
+    ? 'mcp'
+    : isSkillFile
+      ? 'skill'
+      : 'auto';
+  const content = await file.text();
+  const fallbackName = file.name.replace(/\.(md|skill|json)$/i, '') || 'New Capability';
+  capabilityImportFilename.value = file.name;
+  capabilityImportForm.value.kind = requestedKind === 'auto' ? 'prompt' : requestedKind;
+  capabilityImportForm.value.content = content;
+  capabilityImportForm.value.name = fallbackName;
+  await inspectCapabilityContent(requestedKind);
   input.value = '';
+}
+
+async function setCapabilityImportKind(kind: CapabilityKind) {
+  capabilityImportForm.value.kind = kind;
+  if (capabilityImportForm.value.content.trim()) {
+    await inspectCapabilityContent(kind);
+  }
+}
+
+function invalidateCapabilityInspection() {
+  capabilityImportDetected.value = null;
+  capabilityImportError.value = '';
+}
+
+async function inspectCapabilityContent(kind: CapabilityKind | 'auto') {
+  capabilityImportError.value = '';
+  capabilityImportInspecting.value = true;
+  try {
+    const response = await fetch('/api/workbench/assets/inspect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', token: getToken() || '' },
+      body: JSON.stringify({
+        kind,
+        filename: capabilityImportFilename.value,
+        content: capabilityImportForm.value.content,
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.code !== '200') {
+      throw new Error(payload.detail || payload.msg || '无法识别能力元数据');
+    }
+    const detected = payload.data as CapabilityInspectResult;
+    capabilityImportDetected.value = detected;
+    capabilityImportForm.value.kind = detected.kind;
+    capabilityImportForm.value.name = detected.name || capabilityImportForm.value.name;
+    capabilityImportForm.value.category = detected.category
+      || (detected.kind === 'mcp' ? '外部连接' : '自定义');
+    capabilityImportForm.value.description = detected.description || '';
+  } catch (error) {
+    capabilityImportDetected.value = null;
+    capabilityImportError.value = error instanceof Error
+      ? `${error.message}，仍可手动填写后导入。`
+      : '无法识别能力元数据，仍可手动填写后导入。';
+  } finally {
+    capabilityImportInspecting.value = false;
+  }
 }
 
 async function importCapability() {
@@ -5746,6 +5834,41 @@ onUnmounted(() => {
 
 .capability-file-import input {
   display: none;
+}
+
+.capability-import-detected {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.capability-import-detected > span {
+  padding: 4px 7px;
+  border: 1px solid rgba(91, 123, 255, 0.14);
+  border-radius: 6px;
+  background: rgba(91, 123, 255, 0.055);
+  color: #6678ae;
+  font-size: calc(var(--wb-font-scale) * 7px);
+  line-height: 1;
+}
+
+.capability-import-detected > span:first-child {
+  background: rgba(43, 140, 96, 0.08);
+  color: #2d7d57;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.capability-import-detected.loading > span {
+  animation: capability-inspect-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes capability-inspect-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
 }
 
 .capability-import-note {
@@ -8933,10 +9056,15 @@ onUnmounted(() => {
 
 :global(.dark-mode .mapping-tool),
 :global(.dark-mode .capability-import-panel input),
-:global(.dark-mode .capability-import-panel textarea) {
+:global(.dark-mode .capability-import-panel textarea),
+:global(.dark-mode .capability-import-detected > span) {
   border-color: rgba(255, 255, 255, 0.08);
   background: rgba(18, 21, 32, 0.9);
   color: #dfe3ef;
+}
+
+:global(.dark-mode .capability-import-detected > span:first-child) {
+  color: #9edbbd;
 }
 
 :global(.dark-mode .thinking-panel),
