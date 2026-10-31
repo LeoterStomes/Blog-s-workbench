@@ -1154,6 +1154,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { getAvatarUrl, getToken, getUser, setUser } from '@lib/auth';
 import { normalizeAgentMarkdown, wrapMarkdownTables } from '@lib/agentMarkdown.mjs';
+import { artifactFromToolResult } from '@lib/artifactResults.mjs';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
@@ -2042,15 +2043,6 @@ function trapWorkflowFocus(event: KeyboardEvent) {
   }
 }
 
-function artifactFromResult(result: any, fallbackFormat = '') {
-  if (!result || typeof result !== 'object') return null;
-  const url = result.url || result.downloadUrl || result.download_url;
-  const filename = result.filename || result.fileName || result.title || (url ? String(url).split('/').pop() : '');
-  const format = result.format || fallbackFormat || (filename ? filename.split('.').pop() : '');
-  if (!url || !filename) return null;
-  return { url: String(url), filename: String(filename), format: String(format) };
-}
-
 function isSafeArtifactUrl(url?: string) {
   const safeUrl = safeArtifactLink(url);
   if (!safeUrl) return false;
@@ -2233,7 +2225,7 @@ async function runTask() {
               tool.finishedAt = data.finished_at;
               tool.durationMs = data.duration_ms;
               tool.summary = data.summary;
-              const artifact = artifactFromResult(data.result);
+              const artifact = artifactFromToolResult(data.result, data.tool);
               if (artifact && !artifacts.value.some(item => item.url === artifact.url)) {
                 const artifactId = pushEvent({
                   type: 'artifact',
