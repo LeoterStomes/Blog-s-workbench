@@ -248,18 +248,12 @@
                 </div>
 
                 <div v-else-if="event.type === 'thinking'" class="event-thinking">
-                  <button type="button" class="analysis-head" @click="analysisExpanded = !analysisExpanded">
-                    <span class="analysis-avatar">
-                      <img v-if="agentAvatar" :src="agentAvatar" alt="" />
-                      <template v-else>AI</template>
+                  <button type="button" class="thinking-toggle" @click="analysisExpanded = !analysisExpanded">
+                    <span class="thinking-label">
+                      <i :class="{ running: event.status === 'running' }" />
+                      {{ event.status === 'running' ? '正在分析任务' : '任务分析' }}
                     </span>
-                    <span class="analysis-title">
-                      <strong>{{ event.status === 'running' ? '正在分析任务' : '任务分析' }}</strong>
-                      <small>{{ analysisExpanded ? '点击收起推理过程' : '点击展开推理过程' }}</small>
-                    </span>
-                    <span class="analysis-state" :class="{ running: event.status === 'running' }">
-                      <i />{{ event.status === 'running' ? '进行中' : '已完成' }}
-                    </span>
+                    <span class="thinking-hint">{{ analysisExpanded ? '收起' : '展开' }}</span>
                     <svg viewBox="0 0 24 24" :class="{ collapsed: !analysisExpanded }"><path d="M6 9l6 6 6-6" /></svg>
                   </button>
                   <div v-if="analysisExpanded" class="analysis-content agent-markdown" v-html="renderMarkdown(event.content || '')" />
@@ -3185,80 +3179,52 @@ onUnmounted(() => {
     rgba(248, 249, 253, 0.78);
 }
 
-.analysis-head {
+.thinking-toggle {
   width: 100%;
-  padding: 10px 12px;
+  padding: 9px 12px;
   border: 0;
+  border-bottom: 1px solid transparent;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
   background: transparent;
-  color: inherit;
+  color: #7a8194;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.analysis-avatar {
-  width: 26px;
-  height: 26px;
-  flex-shrink: 0;
-  overflow: hidden;
-  border-radius: 8px;
-  display: grid;
-  place-items: center;
-  background: rgba(91, 123, 255, 0.1);
-  color: var(--wb-blue-deep);
-  font-size: calc(var(--wb-font-scale) * 8px);
-  font-weight: 750;
-}
-
-.analysis-title {
-  min-width: 0;
+.thinking-label {
   flex: 1;
-  display: grid;
-  gap: 2px;
-}
-
-.analysis-title strong {
-  color: #5a6176;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #61697e;
   font-size: calc(var(--wb-font-scale) * 9px);
+  font-weight: 650;
 }
 
-.analysis-title small {
+.thinking-label i {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--wb-green);
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.07);
+}
+
+.thinking-label i.running {
+  background: var(--wb-blue);
+  box-shadow: 0 0 0 3px rgba(91, 123, 255, 0.08);
+  animation: tool-pulse 1.2s ease-in-out infinite;
+}
+
+.thinking-hint {
   color: #a0a5b3;
   font-size: calc(var(--wb-font-scale) * 7px);
 }
 
-.analysis-state {
-  padding: 3px 6px;
-  border-radius: 999px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  background: rgba(34, 197, 94, 0.07);
-  color: #438064;
-  font-size: calc(var(--wb-font-scale) * 7px);
-}
-
-.analysis-state i {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--wb-green);
-}
-
-.analysis-state.running {
-  background: rgba(91, 123, 255, 0.08);
-  color: var(--wb-blue-deep);
-}
-
-.analysis-state.running i {
-  background: var(--wb-blue);
-  animation: tool-pulse 1.2s ease-in-out infinite;
-}
-
-.analysis-head > svg {
+.thinking-toggle > svg {
   width: 13px;
   height: 13px;
   fill: none;
@@ -3267,7 +3233,7 @@ onUnmounted(() => {
   transition: transform 170ms ease;
 }
 
-.analysis-head > svg.collapsed {
+.thinking-toggle > svg.collapsed {
   transform: rotate(-90deg);
 }
 
@@ -3279,8 +3245,9 @@ onUnmounted(() => {
 
 .analysis-content {
   max-height: 360px;
-  padding: 0 14px 13px 47px;
+  padding: 10px 14px 13px;
   overflow-y: auto;
+  border-top: 1px solid var(--wb-line);
   color: #8f95a6;
   font-size: calc(var(--wb-font-scale) * 9px);
   line-height: 1.65;
@@ -6018,7 +5985,7 @@ onUnmounted(() => {
   background: rgba(31, 35, 49, 0.86);
 }
 
-:global(.dark-mode .analysis-title strong),
+:global(.dark-mode .thinking-label),
 :global(.dark-mode .avatar-setting-copy strong) {
   color: #e7eaf3;
 }
