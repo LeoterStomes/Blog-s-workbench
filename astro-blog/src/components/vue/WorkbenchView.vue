@@ -803,7 +803,7 @@
                 :aria-selected="contextPanelMode === 'workflow'"
                 :class="{ active: contextPanelMode === 'workflow' }"
                 @click="contextPanelMode = 'workflow'"
-              >流程 <span>{{ workflowNodes.length }}</span></button>
+              >计划 <span>{{ workflowNodes.length }}</span></button>
             </div>
           </div>
 
@@ -867,13 +867,23 @@
             <div class="workflow-mini-toolbar">
               <div class="workflow-live">
                 <i :class="{ running: isRunning }" />
-                <span>LIVE FLOW</span>
-                <small>{{ workflowStats.stages }} 阶段 · {{ workflowStats.tools }} 工具</small>
+                <span>AGENT PLAN</span>
+                <small>{{ workflowStats.planNodes }} 计划 · {{ workflowStats.tools }} 执行</small>
               </div>
               <button type="button" :disabled="!workflowStages.length" @click="openWorkflowCanvas()">
                 展开画布
                 <svg viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" /></svg>
               </button>
+            </div>
+
+            <div v-if="workflowNodes.length" class="workflow-plan-progress" :class="{ running: isRunning }">
+              <div>
+                <span>{{ workflowCurrentLabel }}</span>
+                <strong>{{ workflowProgress }}%</strong>
+              </div>
+              <div class="workflow-progress-track">
+                <i :style="{ width: `${workflowProgress}%` }" />
+              </div>
             </div>
 
             <div v-if="workflowStages.length" class="workflow-mini-list">
@@ -932,8 +942,8 @@
 
             <div v-else class="workflow-empty">
               <span>00</span>
-              <strong>还没有执行流程</strong>
-              <p>任务开始后，需求、分析、工具分支和产物会组成可展开的工作流。</p>
+              <strong>Agent 计划尚未生成</strong>
+              <p>任务开始后，Agent 会在这里逐步建立计划、执行步骤和交付结果。</p>
             </div>
           </div>
         </section>
@@ -951,6 +961,7 @@
           <section
             ref="workflowShellRef"
             class="workflow-shell"
+            :style="{ '--flow-font-scale': textZoomFactor }"
             role="dialog"
             aria-modal="true"
             aria-labelledby="workflow-canvas-title"
@@ -958,8 +969,9 @@
           >
             <header class="workflow-header">
               <div class="workflow-header-copy">
-                <span class="workflow-kicker"><i :class="{ running: isRunning }" /> LIVE WORKFLOW</span>
-                <h2 id="workflow-canvas-title">{{ taskTitle || '任务工作流' }}</h2>
+                <span class="workflow-kicker"><i :class="{ running: isRunning }" /> AGENT PLAN</span>
+                <h2 id="workflow-canvas-title">Agent 工作计划</h2>
+                <p>{{ taskTitle || '等待任务计划' }}</p>
               </div>
               <div class="workflow-header-actions">
                 <span class="workflow-run-state" :class="statusTone">{{ statusLabel }}</span>
@@ -970,14 +982,13 @@
             </header>
 
             <div class="workflow-overview">
-              <div class="workflow-stat"><strong>{{ workflowStats.stages }}</strong><span>编排阶段</span></div>
-              <div class="workflow-stat"><strong>{{ workflowStats.tools }}</strong><span>工具节点</span></div>
+              <div class="workflow-stat progress"><strong>{{ workflowProgress }}%</strong><span>计划进度</span></div>
+              <div class="workflow-stat"><strong>{{ workflowNodes.length }}</strong><span>计划节点</span></div>
+              <div class="workflow-stat"><strong>{{ workflowStats.tools }}</strong><span>执行步骤</span></div>
               <div class="workflow-stat"><strong>{{ workflowStats.parallelBatches }}</strong><span>并行批次</span></div>
-              <div class="workflow-stat" :class="{ alert: workflowStats.errors }"><strong>{{ workflowStats.errors }}</strong><span>异常节点</span></div>
-              <div class="workflow-legend">
-                <span><i class="status-done" />完成</span>
-                <span><i class="status-running" />运行中</span>
-                <span><i class="status-error" />异常</span>
+              <div class="workflow-overview-progress" :class="{ running: isRunning }">
+                <span>{{ workflowCurrentLabel }}</span>
+                <div class="workflow-progress-track"><i :style="{ width: `${workflowProgress}%` }" /></div>
               </div>
             </div>
 
@@ -996,7 +1007,7 @@
                     </div>
                     <div class="workflow-stage-main">
                       <div class="workflow-stage-heading">
-                        <span>PHASE {{ String(stageIndex + 1).padStart(2, '0') }}</span>
+                        <span>PLAN {{ String(stageIndex + 1).padStart(2, '0') }}</span>
                         <small :class="`status-${stage.status}`">{{ workflowStatusLabel(stage.status) }}</small>
                       </div>
 
@@ -1048,8 +1059,8 @@
                   </article>
                 </div>
                 <div v-else class="workflow-canvas-empty">
-                  <span>NO ACTIVE FLOW</span>
-                  <strong>任务开始后，这里会展开完整工作流。</strong>
+                  <span>NO ACTIVE PLAN</span>
+                  <strong>任务开始后，这里会展开 Agent 的执行计划。</strong>
                 </div>
               </div>
 
@@ -1058,7 +1069,7 @@
                   <div class="workflow-inspector-head">
                     <span class="workflow-node-mark" :class="`kind-${selectedWorkflowNode.kind}`">{{ selectedWorkflowNode.mark }}</span>
                     <div>
-                      <small>NODE INSPECTOR</small>
+                      <small>PLAN INSPECTOR</small>
                       <h3>{{ selectedWorkflowNode.title }}</h3>
                     </div>
                   </div>
@@ -1107,8 +1118,8 @@
                   >在产物区打开</button>
                 </template>
                 <div v-else class="workflow-inspector-empty">
-                  <span>SELECT A NODE</span>
-                  <p>选择任一流程节点查看输入、状态和结果摘要。</p>
+                  <span>SELECT A PLAN NODE</span>
+                  <p>选择任一计划节点查看执行输入、状态和结果摘要。</p>
                 </div>
               </aside>
             </div>
@@ -1366,9 +1377,36 @@ const visibleTaskEvents = computed(() => taskEvents.value.filter(event => event.
 const workflowStages = computed<WorkflowStageView[]>(() => {
   const stages: WorkflowStageView[] = [];
   const toolStages = new Map<string, WorkflowStageView>();
+  let planStage: WorkflowStageView | null = null;
 
   taskEvents.value.forEach(event => {
+    if (event.type === 'user' || event.type === 'text') return;
+
     const node = workflowNodeFromEvent(event);
+    if (event.type === 'thinking') {
+      if (!planStage) {
+        planStage = {
+          id: `plan-${event.id}`,
+          kind: 'analysis',
+          title: '计划与判断',
+          detail: node.detail,
+          status: node.status,
+          nodes: [node],
+        };
+        stages.push(planStage);
+      } else {
+        const planNode = planStage.nodes[0];
+        if (node.detail && !planNode.detail.includes(node.detail)) {
+          planNode.detail = [planNode.detail, node.detail].filter(Boolean).join('\n\n');
+        }
+        planNode.status = node.status;
+        planNode.meta = node.meta;
+        planStage.detail = planNode.detail;
+        planStage.status = node.status;
+      }
+      return;
+    }
+
     if (event.type === 'tool') {
       const batchId = event.batchId || (event.round ? `round-${event.round}` : `call-${event.id}`);
       let stage = toolStages.get(batchId);
@@ -1376,7 +1414,7 @@ const workflowStages = computed<WorkflowStageView[]>(() => {
         stage = {
           id: `tools-${batchId}`,
           kind: 'tools',
-          title: event.round ? `执行批次 ${String(event.round).padStart(2, '0')}` : '工具执行',
+          title: `执行步骤 ${String(toolStages.size + 1).padStart(2, '0')}`,
           detail: '',
           status: 'running',
           nodes: [],
@@ -1414,6 +1452,27 @@ const workflowStages = computed<WorkflowStageView[]>(() => {
     });
   });
 
+  if (!planStage && (isRunning.value || stages.length > 0)) {
+    const pendingPlan: WorkflowNodeView = {
+      id: 'plan-pending',
+      eventId: 0,
+      kind: 'analysis',
+      mark: '计',
+      title: '生成执行计划',
+      detail: isRunning.value ? 'Agent 正在分析目标、资料和可执行步骤。' : '本轮没有返回额外的计划说明。',
+      meta: isRunning.value ? '规划中' : '计划',
+      status: isRunning.value ? 'running' : 'done',
+    };
+    stages.unshift({
+      id: 'plan-pending-stage',
+      kind: 'analysis',
+      title: '计划与判断',
+      detail: pendingPlan.detail,
+      status: pendingPlan.status,
+      nodes: [pendingPlan],
+    });
+  }
+
   return stages;
 });
 const workflowNodes = computed(() => workflowStages.value.flatMap(stage => stage.nodes));
@@ -1431,11 +1490,27 @@ const selectedWorkflowArguments = computed(() => Object.entries(selectedWorkflow
   })));
 const workflowStats = computed(() => ({
   stages: workflowStages.value.length,
+  planNodes: workflowNodes.value.filter(node => node.kind === 'analysis').length,
   tools: workflowNodes.value.filter(node => node.kind === 'tool').length,
   running: workflowNodes.value.filter(node => node.status === 'running').length,
   errors: workflowNodes.value.filter(node => node.status === 'error' || node.status === 'cancelled').length,
   parallelBatches: workflowStages.value.filter(stage => stage.kind === 'tools' && stage.nodes.length > 1).length,
 }));
+const workflowProgress = computed(() => {
+  if (!workflowNodes.value.length) return 0;
+  const completed = workflowNodes.value.reduce((total, node) => {
+    if (node.status === 'done' || node.status === 'error' || node.status === 'cancelled') return total + 1;
+    return total + 0.3;
+  }, 0);
+  return Math.min(100, Math.round((completed / workflowNodes.value.length) * 100));
+});
+const workflowCurrentLabel = computed(() => {
+  const running = [...workflowNodes.value].reverse().find(node => node.status === 'running');
+  if (running) return `正在执行：${running.title}`;
+  if (workflowStats.value.errors) return `计划中有 ${workflowStats.value.errors} 个异常节点`;
+  if (workflowNodes.value.length) return 'Agent 计划已执行完成';
+  return '等待 Agent 生成计划';
+});
 const statusLabel = computed(() => ({
   idle: '空闲',
   connecting: '正在连接',
@@ -1830,10 +1905,10 @@ function workflowNodeFromEvent(event: TaskEvent): WorkflowNodeView {
       id: `node-${event.id}`,
       eventId: event.id,
       kind: 'analysis',
-      mark: '析',
-      title: event.status === 'running' ? '正在分析' : '分析任务',
-      detail: event.content || (event.status === 'running' ? '正在梳理目标、资料和执行步骤。' : '分析已完成。'),
-      meta: event.status === 'running' ? '分析中' : '分析完成',
+      mark: '计',
+      title: 'Agent 计划',
+      detail: event.content || (event.status === 'running' ? '正在梳理目标、资料和执行步骤。' : '计划已更新。'),
+      meta: event.status === 'running' ? '规划中' : '计划已更新',
       status: baseStatus,
     };
   }
@@ -1896,11 +1971,11 @@ function workflowNodeFromEvent(event: TaskEvent): WorkflowNodeView {
 
 function workflowStageTitle(kind: WorkflowStageKind) {
   return {
-    intent: '理解需求',
-    analysis: '分析任务',
-    tools: '执行工具',
-    response: '整理回复',
-    artifact: '交付产物',
+    intent: '计划输入',
+    analysis: '计划与判断',
+    tools: '执行步骤',
+    response: '计划结果',
+    artifact: '交付结果',
     error: '中断处理',
   }[kind];
 }
@@ -6346,7 +6421,7 @@ onUnmounted(() => {
 .workflow-live > span {
   color: #47506a;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: calc(var(--wb-font-scale) * 6px);
+  font-size: calc(var(--wb-font-scale) * 8px);
   font-weight: 700;
   letter-spacing: 0.08em;
 }
@@ -6355,14 +6430,14 @@ onUnmounted(() => {
   min-width: 0;
   overflow: hidden;
   color: #a3a8b6;
-  font-size: calc(var(--wb-font-scale) * 6px);
+  font-size: calc(var(--wb-font-scale) * 7px);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .workflow-mini-toolbar > button {
-  height: 24px;
-  padding: 0 7px;
+  height: 28px;
+  padding: 0 8px;
   border: 1px solid var(--wb-line);
   border-radius: 7px;
   display: flex;
@@ -6371,7 +6446,7 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.55);
   color: #697186;
   font: inherit;
-  font-size: calc(var(--wb-font-scale) * 7px);
+  font-size: calc(var(--wb-font-scale) * 8px);
   cursor: pointer;
 }
 
@@ -6381,11 +6456,76 @@ onUnmounted(() => {
 }
 
 .workflow-mini-toolbar > button svg {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
+}
+
+.workflow-plan-progress {
+  margin: 0 0 11px;
+  padding: 9px 10px;
+  border: 1px solid var(--wb-line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.workflow-plan-progress > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workflow-plan-progress span {
+  min-width: 0;
+  overflow: hidden;
+  color: #747c90;
+  font-size: calc(var(--wb-font-scale) * 7px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-plan-progress strong {
+  flex-shrink: 0;
+  color: var(--wb-blue-deep);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: calc(var(--wb-font-scale) * 8px);
+}
+
+.workflow-progress-track {
+  position: relative;
+  height: 4px;
+  margin-top: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e9edf4;
+}
+
+.workflow-progress-track > i {
+  position: relative;
+  height: 100%;
+  display: block;
+  overflow: hidden;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #7390ff, #4f6fe8);
+  transition: width 480ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.workflow-plan-progress.running .workflow-progress-track > i::after,
+.workflow-overview-progress.running .workflow-progress-track > i::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 42%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.75), transparent);
+  animation: workflow-progress-shimmer 1.7s linear infinite;
+}
+
+@keyframes workflow-progress-shimmer {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(260%); }
 }
 
 .workflow-mini-list {
@@ -6399,9 +6539,15 @@ onUnmounted(() => {
 .workflow-mini-stage {
   position: relative;
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
-  gap: 7px;
-  padding-bottom: 9px;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 8px;
+  padding-bottom: 11px;
+  animation: workflow-node-enter 280ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes workflow-node-enter {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .workflow-mini-stage:last-child {
@@ -6416,15 +6562,15 @@ onUnmounted(() => {
 }
 
 .workflow-mini-rail > span {
-  width: 22px;
-  height: 20px;
-  border-radius: 6px;
+  width: 26px;
+  height: 23px;
+  border-radius: 7px;
   display: grid;
   place-items: center;
   background: #eef1f7;
   color: #9399aa;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: calc(var(--wb-font-scale) * 6px);
+  font-size: calc(var(--wb-font-scale) * 7px);
   font-weight: 650;
 }
 
@@ -6433,6 +6579,24 @@ onUnmounted(() => {
   flex: 1;
   min-height: 12px;
   background: linear-gradient(#dfe3eb, #e9ebf1);
+}
+
+.workflow-mini-stage.status-running .workflow-mini-rail > span {
+  background: var(--wb-blue);
+  color: white;
+  box-shadow: 0 0 0 4px rgba(91, 123, 255, 0.08);
+}
+
+.workflow-mini-stage.status-running .workflow-mini-rail > i {
+  width: 2px;
+  background: linear-gradient(180deg, #8ba3ff, #5b7bff, #8ba3ff);
+  background-size: 100% 220%;
+  animation: workflow-rail-flow 1.2s linear infinite;
+}
+
+@keyframes workflow-rail-flow {
+  from { background-position: 50% 0; }
+  to { background-position: 50% 220%; }
 }
 
 .workflow-mini-stage:last-child .workflow-mini-rail > i {
@@ -6475,15 +6639,15 @@ onUnmounted(() => {
 }
 
 .workflow-node-mark {
-  width: 25px;
-  height: 25px;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
   border-radius: 8px;
   display: grid;
   place-items: center;
   background: #edf0f6;
   color: #6f788e;
-  font-size: calc(var(--wb-font-scale) * 7px);
+  font-size: calc(var(--wb-font-scale) * 8px);
   font-weight: 750;
 }
 
@@ -6522,8 +6686,8 @@ onUnmounted(() => {
   overflow: hidden;
   flex: 1;
   color: #545b70;
-  font-size: calc(var(--wb-font-scale) * 8px);
-  font-weight: 620;
+  font-size: calc(var(--wb-font-scale) * 10px);
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -6559,15 +6723,15 @@ onUnmounted(() => {
   display: -webkit-box;
   overflow: hidden;
   color: #8c93a4;
-  font-size: calc(var(--wb-font-scale) * 7px);
-  line-height: 1.5;
+  font-size: calc(var(--wb-font-scale) * 8px);
+  line-height: 1.55;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
 
 .workflow-mini-card > small {
   color: #a4a9b6;
-  font-size: calc(var(--wb-font-scale) * 6px);
+  font-size: calc(var(--wb-font-scale) * 7px);
 }
 
 .workflow-mini-batch {
@@ -6576,8 +6740,8 @@ onUnmounted(() => {
 
 .workflow-batch-head {
   width: 100%;
-  min-height: 34px;
-  padding: 7px 8px;
+  min-height: 38px;
+  padding: 8px 9px;
   border: 0;
   border-bottom: 1px solid var(--wb-line);
   display: flex;
@@ -6592,14 +6756,14 @@ onUnmounted(() => {
 
 .workflow-batch-head > span {
   color: #596177;
-  font-size: calc(var(--wb-font-scale) * 8px);
-  font-weight: 620;
+  font-size: calc(var(--wb-font-scale) * 9px);
+  font-weight: 650;
 }
 
 .workflow-batch-head > small {
   flex: 1;
   color: #a1a7b5;
-  font-size: calc(var(--wb-font-scale) * 6px);
+  font-size: calc(var(--wb-font-scale) * 7px);
 }
 
 .workflow-batch-head > svg {
@@ -6618,7 +6782,7 @@ onUnmounted(() => {
 
 .workflow-mini-branch {
   width: 100%;
-  padding: 7px 8px;
+  padding: 8px 9px;
   border: 0;
   display: flex;
   align-items: flex-start;
@@ -6649,13 +6813,13 @@ onUnmounted(() => {
 
 .workflow-mini-branch strong {
   color: #5c6377;
-  font-size: calc(var(--wb-font-scale) * 7px);
+  font-size: calc(var(--wb-font-scale) * 8px);
   font-weight: 600;
 }
 
 .workflow-mini-branch small {
   color: #a1a7b5;
-  font-size: calc(var(--wb-font-scale) * 6px);
+  font-size: calc(var(--wb-font-scale) * 7px);
 }
 
 .workflow-empty {
@@ -6682,14 +6846,14 @@ onUnmounted(() => {
 .workflow-empty strong {
   margin-top: 7px;
   color: #8f96a7;
-  font-size: calc(var(--wb-font-scale) * 9px);
+  font-size: calc(var(--wb-font-scale) * 10px);
 }
 
 .workflow-empty p {
   max-width: 200px;
   margin: 5px 0 0;
   color: #a9aebb;
-  font-size: calc(var(--wb-font-scale) * 8px);
+  font-size: calc(var(--wb-font-scale) * 9px);
   line-height: 1.6;
 }
 
@@ -6746,7 +6910,7 @@ onUnmounted(() => {
   gap: 7px;
   color: #6e7892;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 9px;
+  font-size: calc(var(--flow-font-scale, 1) * 9px);
   font-weight: 700;
   letter-spacing: 0.12em;
 }
@@ -6760,9 +6924,19 @@ onUnmounted(() => {
   margin: 7px 0 0;
   overflow: hidden;
   color: var(--flow-ink);
-  font-size: clamp(20px, 1.8vw, 29px);
+  font-size: clamp(calc(var(--flow-font-scale, 1) * 22px), 1.8vw, calc(var(--flow-font-scale, 1) * 30px));
   line-height: 1.2;
   letter-spacing: -0.03em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-header-copy > p {
+  max-width: min(720px, 62vw);
+  margin: 5px 0 0;
+  overflow: hidden;
+  color: #8a92a5;
+  font-size: calc(var(--flow-font-scale, 1) * 10px);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -6782,7 +6956,7 @@ onUnmounted(() => {
   align-items: center;
   background: #eef0f5;
   color: #727a8d;
-  font-size: 10px;
+  font-size: calc(var(--flow-font-scale, 1) * 10px);
   font-weight: 650;
 }
 
@@ -6832,7 +7006,7 @@ onUnmounted(() => {
 }
 
 .workflow-stat {
-  min-width: 82px;
+  min-width: 88px;
   display: grid;
   align-content: center;
   gap: 2px;
@@ -6846,13 +7020,13 @@ onUnmounted(() => {
 .workflow-stat strong {
   color: var(--flow-ink);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 18px;
+  font-size: calc(var(--flow-font-scale, 1) * 20px);
   font-weight: 550;
 }
 
 .workflow-stat span {
   color: #9097a8;
-  font-size: 9px;
+  font-size: calc(var(--flow-font-scale, 1) * 9px);
 }
 
 .workflow-stat.alert strong {
@@ -6884,6 +7058,28 @@ onUnmounted(() => {
 .workflow-legend i.status-running { background: var(--flow-blue); }
 .workflow-legend i.status-error { background: #d24f4f; }
 
+.workflow-overview-progress {
+  min-width: 210px;
+  max-width: 330px;
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+}
+
+.workflow-overview-progress > span {
+  overflow: hidden;
+  color: #747d91;
+  font-size: calc(var(--flow-font-scale, 1) * 9px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-overview-progress .workflow-progress-track {
+  margin-top: 0;
+}
+
 .workflow-body {
   min-height: 0;
   flex: 1;
@@ -6910,6 +7106,12 @@ onUnmounted(() => {
   position: relative;
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);
+  animation: workflow-stage-in 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes workflow-stage-in {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .workflow-stage-rail {
@@ -6928,7 +7130,7 @@ onUnmounted(() => {
   background: #f7f9ff;
   color: #6d7bb0;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 9px;
+  font-size: calc(var(--flow-font-scale, 1) * 9px);
   font-weight: 700;
   box-shadow: 0 3px 12px rgba(55, 70, 120, 0.06);
 }
@@ -6953,6 +7155,13 @@ onUnmounted(() => {
   background: #dce1eb;
 }
 
+.workflow-stage.status-running .workflow-stage-rail > i {
+  width: 2px;
+  background: linear-gradient(180deg, #93a9ff, #5b7bff, #93a9ff);
+  background-size: 100% 220%;
+  animation: workflow-rail-flow 1.2s linear infinite;
+}
+
 .workflow-stage:last-child .workflow-stage-rail > i {
   background: linear-gradient(#dce1eb, transparent);
 }
@@ -6973,7 +7182,7 @@ onUnmounted(() => {
 .workflow-stage-heading > span {
   color: #8f97aa;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 8px;
+  font-size: calc(var(--flow-font-scale, 1) * 9px);
   font-weight: 700;
   letter-spacing: 0.11em;
 }
@@ -6983,7 +7192,7 @@ onUnmounted(() => {
   border-radius: 5px;
   background: #eef1f6;
   color: #778093;
-  font-size: 8px;
+  font-size: calc(var(--flow-font-scale, 1) * 9px);
   text-transform: uppercase;
 }
 
@@ -7003,6 +7212,7 @@ onUnmounted(() => {
 }
 
 .workflow-node-card {
+  position: relative;
   width: 100%;
   min-width: 0;
   padding: 14px;
@@ -7018,6 +7228,24 @@ onUnmounted(() => {
   box-shadow: 0 7px 22px rgba(48, 59, 94, 0.05);
   cursor: pointer;
   transition: 150ms ease;
+}
+
+.workflow-node-card.status-running {
+  overflow: hidden;
+}
+
+.workflow-node-card.status-running::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 20%, rgba(91, 123, 255, 0.08) 46%, transparent 70%);
+  transform: translateX(-120%);
+  animation: workflow-card-scan 2.4s ease-in-out infinite;
+}
+
+@keyframes workflow-card-scan {
+  to { transform: translateX(120%); }
 }
 
 .workflow-node-card:hover,
@@ -7048,7 +7276,7 @@ onUnmounted(() => {
 .workflow-node-copy strong {
   overflow: hidden;
   color: #40485e;
-  font-size: 11px;
+  font-size: calc(var(--flow-font-scale, 1) * 12px);
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7058,8 +7286,8 @@ onUnmounted(() => {
   display: -webkit-box;
   overflow: hidden;
   color: #7f879a;
-  font-size: 9px;
-  line-height: 1.55;
+  font-size: calc(var(--flow-font-scale, 1) * 10px);
+  line-height: 1.62;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -7071,7 +7299,7 @@ onUnmounted(() => {
   gap: 6px;
   color: #9ba2b1;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 8px;
+  font-size: calc(var(--flow-font-scale, 1) * 9px);
 }
 
 .workflow-batch-title {
@@ -7087,7 +7315,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 7px;
   color: #525b72;
-  font-size: 10px;
+  font-size: calc(var(--flow-font-scale, 1) * 11px);
   font-weight: 650;
 }
 
@@ -7099,7 +7327,7 @@ onUnmounted(() => {
 
 .workflow-batch-title > small {
   color: #9aa1b2;
-  font-size: 8px;
+  font-size: calc(var(--flow-font-scale, 1) * 9px);
 }
 
 .workflow-branches {
@@ -7171,7 +7399,7 @@ onUnmounted(() => {
 .workflow-inspector-head small {
   color: #9ba2b2;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 8px;
+  font-size: calc(var(--flow-font-scale, 1) * 9px);
   font-weight: 650;
   letter-spacing: 0.08em;
 }
@@ -7180,7 +7408,7 @@ onUnmounted(() => {
   margin: 4px 0 0;
   overflow: hidden;
   color: #363e53;
-  font-size: 15px;
+  font-size: calc(var(--flow-font-scale, 1) * 17px);
   line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7196,7 +7424,7 @@ onUnmounted(() => {
   gap: 7px;
   background: rgba(255, 255, 255, 0.68);
   color: #6e768a;
-  font-size: 9px;
+  font-size: calc(var(--flow-font-scale, 1) * 10px);
   font-weight: 600;
 }
 
@@ -7211,7 +7439,7 @@ onUnmounted(() => {
   margin-left: auto;
   color: #959cab;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 8px;
+  font-size: calc(var(--flow-font-scale, 1) * 9px);
   font-weight: 400;
 }
 
@@ -7240,7 +7468,7 @@ onUnmounted(() => {
 .workflow-inspector-meta dt,
 .workflow-arguments dt {
   color: #969dab;
-  font-size: 8px;
+  font-size: calc(var(--flow-font-scale, 1) * 9px);
 }
 
 .workflow-inspector-meta dd,
@@ -7248,13 +7476,13 @@ onUnmounted(() => {
   margin: 0;
   overflow-wrap: anywhere;
   color: #5f6679;
-  font-size: 9px;
+  font-size: calc(var(--flow-font-scale, 1) * 10px);
   text-align: right;
 }
 
 .workflow-inspector-meta dd.mono {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 8px;
+  font-size: calc(var(--flow-font-scale, 1) * 9px);
 }
 
 .workflow-inspector-section {
@@ -7265,7 +7493,7 @@ onUnmounted(() => {
   display: block;
   margin-bottom: 8px;
   color: #858da0;
-  font-size: 9px;
+  font-size: calc(var(--flow-font-scale, 1) * 10px);
   font-weight: 650;
 }
 
@@ -7292,7 +7520,7 @@ onUnmounted(() => {
   overflow: auto;
   color: #5c6477;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 8px;
+  font-size: calc(var(--flow-font-scale, 1) * 9px);
   line-height: 1.55;
   text-align: left;
 }
@@ -7306,7 +7534,7 @@ onUnmounted(() => {
   border-radius: 9px;
   background: rgba(255, 255, 255, 0.62);
   color: #626a7e;
-  font-size: 9px;
+  font-size: calc(var(--flow-font-scale, 1) * 10px);
   line-height: 1.65;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
@@ -7947,6 +8175,7 @@ onUnmounted(() => {
 :global(.dark-mode .workflow-empty),
 :global(.dark-mode .workflow-mini-card),
 :global(.dark-mode .workflow-mini-batch),
+:global(.dark-mode .workflow-plan-progress),
 :global(.dark-mode .workflow-mini-toolbar > button),
 :global(.dark-mode .article-feed-sync > button),
 :global(.dark-mode .article-row-actions button) {
@@ -7980,7 +8209,8 @@ onUnmounted(() => {
 :global(.dark-mode .article-meta-line),
 :global(.dark-mode .font-zoom span),
 :global(.dark-mode .workflow-mini-detail),
-:global(.dark-mode .workflow-mini-branch small) {
+:global(.dark-mode .workflow-mini-branch small),
+:global(.dark-mode .workflow-plan-progress span) {
   color: #9ca3b8;
 }
 
@@ -8115,8 +8345,14 @@ onUnmounted(() => {
 :global(.dark-mode) .workflow-node-copy small,
 :global(.dark-mode) .workflow-stage-heading > span,
 :global(.dark-mode) .workflow-stat span,
-:global(.dark-mode) .workflow-batch-title > small {
+:global(.dark-mode) .workflow-batch-title > small,
+:global(.dark-mode) .workflow-header-copy > p,
+:global(.dark-mode) .workflow-overview-progress > span {
   color: #98a0b4;
+}
+
+:global(.dark-mode) .workflow-progress-track {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 :global(.dark-mode) .workflow-canvas {
@@ -8126,7 +8362,10 @@ onUnmounted(() => {
 @media (prefers-reduced-motion: reduce) {
   .workbench *,
   .workbench *::before,
-  .workbench *::after {
+  .workbench *::after,
+  .workflow-overlay *,
+  .workflow-overlay *::before,
+  .workflow-overlay *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }

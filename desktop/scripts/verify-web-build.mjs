@@ -59,4 +59,12 @@ if (!workbenchJs.includes('markdown-table-wrap')) {
   throw new Error('Agent Markdown tables must render inside a responsive scroll container');
 }
 
+if (!workbenchJs.includes('workflow-plan-progress') || !workbenchJs.includes('AGENT PLAN')) {
+  throw new Error('Workflow UI must render the Agent plan with plan progress');
+}
+
+if (!/workflow-card-scan/i.test(workbenchCss) || !/workflow-rail-flow/i.test(workbenchCss)) {
+  throw new Error('Running Agent plan nodes must retain their status animations');
+}
+
 console.log('Workbench CSS scope check passed');
