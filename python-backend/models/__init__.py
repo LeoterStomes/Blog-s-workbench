@@ -2,7 +2,7 @@ from .user import User
 from .article import KnowledgeArticle
 from .category import KnowledgeCategory
 from .favorite import UserFavorite
-from .chat import ConsultationSession, ConsultationMessage
+from .chat import ConsultationSession, ConsultationMessage, ConsultationTaskEvent
 from .announcement import Announcement
 from .music import Music
 from .project import Project

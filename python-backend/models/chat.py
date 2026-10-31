@@ -21,3 +21,15 @@ class ConsultationMessage(Base):
     emotion_tag = Column(String(50))
     ai_model = Column(String(50))
     created_at = Column(DateTime, default=now)
+
+
+class ConsultationTaskEvent(Base):
+    __tablename__ = "consultation_task_event"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    session_id = Column(BigInteger, ForeignKey("consultation_session.id"), nullable=False, index=True)
+    event_type = Column(String(40), nullable=False, index=True)
+    status = Column(String(32))
+    call_id = Column(String(160), index=True)
+    payload = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=now, index=True)

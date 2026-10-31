@@ -3,6 +3,7 @@ import re
 import asyncio
 import copy
 import time
+import uuid
 from datetime import datetime, timezone
 
 import httpx
@@ -11,8 +12,8 @@ from fastapi.responses import StreamingResponse, Response
 from sqlalchemy.orm import Session
 
 from database import get_db, SessionLocal
-from models import ConsultationSession, ConsultationMessage
-from schemas import ChatSessionStartRequest
+from models import ConsultationSession, ConsultationMessage, ConsultationTaskEvent
+from schemas import ChatSessionStartRequest, ChatTaskStatusRequest, ChatConfirmationRequest
 from auth import get_current_user_id, verify_token
 from config import AI_API_KEY, AI_BASE_URL, AI_MODEL
 from services.agent_service import (
@@ -30,6 +31,7 @@ from services.asset_service import (
     imported_skill_index,
 )
 from services.workflow_service import tool_result_workflow_meta
+from services.task_event_service import append_task_event, serialize_task_event
 
 # ── 加载 MCP Server ──
 _mcp_servers = load_mcp_servers()
@@ -103,6 +105,13 @@ WRITE_TOOLS = {
     "delete_article",
     "submit_capability_draft",
 }  # 仅 admin(user_type=2) 可用的工具
+CONFIRMATION_TOOLS = WRITE_TOOLS | {
+    "make_mindmap",
+    "generate_presentation",
+    "generate_weekly_video",
+}
+CONFIRMATION_TIMEOUT_SECONDS = 600
+_pending_confirmations: dict[str, dict] = {}
 
 def _filter_tools_for_user(db: Session, user_id: int, agent_mode: str = "execute") -> list[dict]:
     """根据用户角色与 Harness 模式过滤工具；未知模式按只读处理。"""
@@ -227,6 +236,130 @@ def get_session_messages(
     return {"code": "200", "msg": "ok", "data": result}
 
 
+@router.get("/session/{session_id}/task-state")
+def get_task_state(
+    session_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        sid_int = int(session_id)
+    except (ValueError, TypeError):
+        return {"code": "400", "msg": "会话ID格式错误", "data": None}
+
+    session = db.query(ConsultationSession).filter(
+        ConsultationSession.id == sid_int,
+        ConsultationSession.user_id == user_id,
+    ).first()
+    if not session:
+        return {"code": "404", "msg": "会话不存在", "data": None}
+
+    events = (
+        db.query(ConsultationTaskEvent)
+        .filter(ConsultationTaskEvent.session_id == sid_int)
+        .order_by(ConsultationTaskEvent.id.asc())
+        .all()
+    )
+    pending_confirmations: dict[str, dict] = {}
+    task_status = "idle"
+    for event in events:
+        payload = serialize_task_event(event)["payload"]
+        if event.event_type == "status":
+            task_status = str(payload.get("state") or task_status)
+        elif event.event_type == "confirmation_required":
+            confirmation_id = str(payload.get("confirmationId") or "")
+            if confirmation_id:
+                pending_confirmations[confirmation_id] = {
+                    **payload,
+                    "confirmationId": confirmation_id,
+                    "createdAt": event.created_at.isoformat() if event.created_at else "",
+                }
+        elif event.event_type == "confirmation_decision":
+            pending_confirmations.pop(str(payload.get("confirmationId") or ""), None)
+
+    pending_confirmation = next(reversed(pending_confirmations.values()), None) if pending_confirmations else None
+    if pending_confirmation:
+        pending_confirmation["live"] = pending_confirmation["confirmationId"] in _pending_confirmations
+        if not pending_confirmation["live"]:
+            task_status = "paused"
+
+    return {
+        "code": "200",
+        "msg": "ok",
+        "data": {
+            "status": task_status,
+            "events": [serialize_task_event(event) for event in events],
+            "pendingConfirmation": pending_confirmation,
+        },
+    }
+
+
+@router.post("/session/{session_id}/task-status")
+async def update_task_status(
+    session_id: str,
+    req: ChatTaskStatusRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    if req.status not in {"paused", "cancelled"}:
+        return {"code": "400", "msg": "不支持的任务状态", "data": None}
+    try:
+        sid_int = int(session_id)
+    except (ValueError, TypeError):
+        return {"code": "400", "msg": "会话ID格式错误", "data": None}
+    session = db.query(ConsultationSession).filter(
+        ConsultationSession.id == sid_int,
+        ConsultationSession.user_id == user_id,
+    ).first()
+    if not session:
+        return {"code": "404", "msg": "会话不存在", "data": None}
+
+    if req.status in {"paused", "cancelled"}:
+        for entry in _pending_confirmations.values():
+            if entry.get("session_id") == sid_int and entry.get("user_id") == user_id:
+                entry["decision"] = "reject"
+                entry["event"].set()
+    append_task_event(sid_int, "status", {"state": req.status}, status=req.status)
+    return {"code": "200", "msg": "ok", "data": {"status": req.status}}
+
+
+@router.post("/session/{session_id}/confirmation")
+async def resolve_confirmation(
+    session_id: str,
+    req: ChatConfirmationRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    if req.decision not in {"approve", "reject"}:
+        return {"code": "400", "msg": "确认操作无效", "data": None}
+    try:
+        sid_int = int(session_id)
+    except (ValueError, TypeError):
+        return {"code": "400", "msg": "会话ID格式错误", "data": None}
+    session = db.query(ConsultationSession).filter(
+        ConsultationSession.id == sid_int,
+        ConsultationSession.user_id == user_id,
+    ).first()
+    if not session:
+        return {"code": "404", "msg": "会话不存在", "data": None}
+
+    entry = _pending_confirmations.get(req.confirmationId)
+    if not entry or entry.get("session_id") != sid_int or entry.get("user_id") != user_id:
+        return {"code": "409", "msg": "该确认已失效，请恢复任务后重试", "data": None}
+    entry["decision"] = req.decision
+    entry["event"].set()
+    append_task_event(
+        sid_int,
+        "confirmation_decision",
+        {
+            "confirmationId": req.confirmationId,
+            "decision": req.decision,
+        },
+        status=req.decision,
+    )
+    return {"code": "200", "msg": "ok", "data": {"decision": req.decision}}
+
+
 @router.delete("/session/{session_id}")
 def delete_session(
     session_id: str,
@@ -249,6 +382,9 @@ def delete_session(
     # 删除所有消息
     db.query(ConsultationMessage).filter(
         ConsultationMessage.session_id == sid_int
+    ).delete()
+    db.query(ConsultationTaskEvent).filter(
+        ConsultationTaskEvent.session_id == sid_int
     ).delete()
     # 删除会话
     db.delete(session)
@@ -276,6 +412,7 @@ async def stream_chat(
     session_id = body.get("sessionId", "")
     user_message = body.get("userMessage", "")
     agent_mode = normalize_agent_mode(body.get("agentMode"))
+    is_resume = bool(body.get("resume"))
 
     if not session_id or not user_message:
         return {"code": "400", "msg": "参数缺失", "data": None}
@@ -293,15 +430,23 @@ async def stream_chat(
     if not session:
         return {"code": "404", "msg": "会话不存在", "data": None}
 
-    # Save user message
-    user_msg = ConsultationMessage(
-        session_id=sid_int,
-        sender_type=1,
-        content=user_message,
-        created_at=_now(),
+    # Resume requests reuse the existing task context and should not create a
+    # visible synthetic user message in the conversation.
+    if not is_resume:
+        user_msg = ConsultationMessage(
+            session_id=sid_int,
+            sender_type=1,
+            content=user_message,
+            created_at=_now(),
+        )
+        db.add(user_msg)
+        db.commit()
+    append_task_event(
+        sid_int,
+        "status",
+        {"state": "running", "resume": is_resume},
+        status="running",
     )
-    db.add(user_msg)
-    db.commit()
 
     # Load history — 滑动窗口：最近5条原文 + 之前压缩为摘要
     all_history = (
@@ -410,6 +555,32 @@ async def stream_chat(
         tool_ctx = "上一轮已执行工具的结果（与当前问题相关才使用；不要重复调用已成功的相同工具）：\n" + "\n".join(m.content[:200] for m in tool_history[-8:])
         messages.insert(1, {"role": "system", "content": tool_ctx})
 
+    if is_resume:
+        saved_events = (
+            db.query(ConsultationTaskEvent)
+            .filter(ConsultationTaskEvent.session_id == sid_int)
+            .order_by(ConsultationTaskEvent.id.desc())
+            .limit(80)
+            .all()
+        )[::-1]
+        resume_lines = [
+            "## 恢复执行",
+            "用户正在恢复此前暂停或失败的任务。请基于已有上下文继续完成，不要重复已经成功的写操作；"
+            "如果上一项操作结果不明确，先核验状态再决定是否重试。",
+        ]
+        for saved_event in saved_events:
+            payload = serialize_task_event(saved_event)["payload"]
+            if saved_event.event_type == "thinking" and payload.get("text"):
+                resume_lines.append(f"- 计划记录：{str(payload['text'])[-600:]}")
+            elif saved_event.event_type == "tool_result":
+                resume_lines.append(
+                    f"- {payload.get('tool', '工具')}：{saved_event.status or payload.get('status', 'done')}，"
+                    f"{payload.get('summary', '')}"
+                )
+            elif saved_event.event_type == "confirmation_decision":
+                resume_lines.append(f"- 用户确认：{payload.get('decision', '')}")
+        messages.append({"role": "system", "content": "\n".join(resume_lines)})
+
     available_tools = _filter_tools_for_user(db, user_id, agent_mode)
     available_tools = filter_enabled_mcp_tools(available_tools, disabled_capabilities)
     allowed_tool_names = {
@@ -421,6 +592,8 @@ async def stream_chat(
     async def event_generator():
         full_content = ""
         current_messages = messages
+        plan_fragments: list[str] = []
+        plan_flush_state = {"chars": 0, "last": time.monotonic()}
         tool_rounds = 0
         consecutive_failures = 0
         called_tools: set[str] = set()  # 去重：已调用的工具+参数
@@ -438,17 +611,42 @@ async def stream_chat(
         MAX_TOTAL_TOOLS = 30   # 单轮总工具硬上限（支持分页遍历完整文章库）
         BATCH_TIMEOUT = 300.0   # 并行批次总超时（需容纳视频生成）
 
+        def thinking_sse(text: str) -> str:
+            if text:
+                plan_fragments.append(text)
+                plan_flush_state["chars"] += len(text)
+                now_monotonic = time.monotonic()
+                if (
+                    plan_flush_state["chars"] >= 400
+                    or now_monotonic - plan_flush_state["last"] >= 2.0
+                ):
+                    flush_plan_event()
+            return f"event: thinking\ndata: {json.dumps({'text': text}, ensure_ascii=False)}\n\n"
+
+        def flush_plan_event() -> None:
+            text = "".join(plan_fragments).strip()
+            plan_fragments.clear()
+            plan_flush_state["chars"] = 0
+            plan_flush_state["last"] = time.monotonic()
+            if text:
+                append_task_event(
+                    sid_int,
+                    "thinking",
+                    {"text": text},
+                    status="done",
+                )
+
         try:
             while tool_rounds < MAX_TOOL_ROUNDS:
                 tool_rounds += 1
                 if consecutive_failures >= 6:
-                    yield f"event: thinking\ndata: {json.dumps({'text': '多次执行出错，用已有信息整理回答'})}\n\n"
+                    yield thinking_sse("多次执行出错，用已有信息整理回答")
                     break
                 # 状态心跳：让用户看到 Agent 正在做什么（而非长时间无反馈）
                 if tool_rounds == 1:
-                    yield f"event: thinking\ndata: {json.dumps({'text': '正在思考，规划下一步…'})}\n\n"
+                    yield thinking_sse("正在思考，规划下一步…")
                 else:
-                    yield f"event: thinking\ndata: {json.dumps({'text': '已获取结果，正在整理…'})}\n\n"
+                    yield thinking_sse("已获取结果，正在整理…")
                 accumulated_tool_calls: dict[int, dict] = {}  # index -> {name, args}
                 round_text = ""  # 本轮文本：有工具调用的轮次视为思考过程，不进最终回复
 
@@ -475,7 +673,7 @@ async def stream_chat(
                         # 检查 HTTP 状态：模型服务异常时显式重试，不再静默吞掉
                         if response.status_code != 200:
                             consecutive_failures += 2
-                            yield f"event: thinking\ndata: {json.dumps({'text': f'模型服务异常（HTTP {response.status_code}），正在重试…'})}\n\n"
+                            yield thinking_sse(f"模型服务异常（HTTP {response.status_code}），正在重试…")
                             continue
                         async for line in response.aiter_lines():
                             if not line.startswith("data: "):
@@ -490,7 +688,7 @@ async def stream_chat(
                                 # 深度思考（reasoning_content）→ 实时推给前端思考卡片
                                 reasoning = delta.get("reasoning_content")
                                 if reasoning:
-                                    yield f"event: thinking\ndata: {json.dumps({'text': reasoning})}\n\n"
+                                    yield thinking_sse(reasoning)
 
                                 # 处理工具调用（先检测，因为有工具调用时内容要扣住）
                                 tc_list = delta.get("tool_calls")
@@ -524,7 +722,7 @@ async def stream_chat(
                                         round_text += content
                                         # 工具调用过程中的文本发 thinking（折叠），不影响最终正文
                                         if accumulated_tool_calls:
-                                            yield f"event: thinking\ndata: {json.dumps({'text': content})}\n\n"
+                                            yield thinking_sse(content)
                                         else:
                                             yield f"event: message\ndata: {json.dumps({'text': content})}\n\n"
                                         await asyncio.sleep(0.01)
@@ -534,6 +732,7 @@ async def stream_chat(
                 # 如果有工具调用，执行它们
                 if accumulated_tool_calls:
                     had_any_tool_calls = True
+                    flush_plan_event()
                     # 本轮文本属于思考过程，保留在对话历史中供模型参考，但不计入最终回复
                     # 构建 assistant 消息（含 tool_calls）
                     assistant_msg = {"role": "assistant", "content": round_text or None}
@@ -591,7 +790,7 @@ async def stream_chat(
                             elif tc["name"] in ("read_url", "extract_images") and tool_counts.get(tc["name"], 0) >= MAX_READ_CALLS:
                                 cap_reason = "网页读取次数已达上限"
                             if cap_reason:
-                                yield f"event: thinking\ndata: {json.dumps({'text': cap_reason + '，整理已有信息'})}\n\n"
+                                yield thinking_sse(cap_reason + "，整理已有信息")
 
                         if cap_reason is not None:
                             # 协议合规：被上限拦截的调用回填 tool 响应，避免悬空 tool_calls
@@ -649,7 +848,136 @@ async def stream_chat(
                         task_item["call_id"] = call_id
                         task_item["started_at"] = started_at
                         call_started_at[call_id] = started_at
-                        yield f"event: tool_call\ndata: {json.dumps({'tool': tc['name'], 'args': task_item['args'], 'call_id': call_id, 'round': tool_rounds, 'batch_id': batch_id, 'batch_index': batch_index, 'batch_size': len(tasks_to_run), 'started_at': started_at})}\n\n"
+                        tool_call_payload = {
+                            "tool": tc["name"],
+                            "args": task_item["args"],
+                            "call_id": call_id,
+                            "round": tool_rounds,
+                            "batch_id": batch_id,
+                            "batch_index": batch_index,
+                            "batch_size": len(tasks_to_run),
+                            "started_at": started_at,
+                        }
+                        append_task_event(
+                            sid_int,
+                            "tool_call",
+                            tool_call_payload,
+                            status="running",
+                            call_id=call_id,
+                        )
+                        yield f"event: tool_call\ndata: {json.dumps(tool_call_payload, ensure_ascii=False)}\n\n"
+
+                    confirmation_tasks = [
+                        item for item in tasks_to_run
+                        if item["tc"]["name"] in CONFIRMATION_TOOLS
+                    ]
+                    if confirmation_tasks:
+                        confirmation_id = uuid.uuid4().hex
+                        confirmation_payload = {
+                            "confirmationId": confirmation_id,
+                            "batchId": batch_id,
+                            "round": tool_rounds,
+                            "actions": [
+                                {
+                                    "callId": item["call_id"],
+                                    "tool": item["tc"]["name"],
+                                    "args": item["args"],
+                                }
+                                for item in confirmation_tasks
+                            ],
+                        }
+                        confirmation_event = asyncio.Event()
+                        pending_entry = {
+                            "event": confirmation_event,
+                            "decision": None,
+                            "session_id": sid_int,
+                            "user_id": user_id,
+                        }
+                        _pending_confirmations[confirmation_id] = pending_entry
+                        append_task_event(
+                            sid_int,
+                            "confirmation_required",
+                            confirmation_payload,
+                            status="waiting",
+                        )
+                        append_task_event(
+                            sid_int,
+                            "status",
+                            {"state": "waiting_confirmation"},
+                            status="waiting_confirmation",
+                        )
+                        yield f"event: confirmation_required\ndata: {json.dumps(confirmation_payload, ensure_ascii=False)}\n\n"
+                        try:
+                            await asyncio.wait_for(
+                                confirmation_event.wait(),
+                                timeout=CONFIRMATION_TIMEOUT_SECONDS,
+                            )
+                        except asyncio.TimeoutError:
+                            pending_entry["decision"] = "timeout"
+                        finally:
+                            _pending_confirmations.pop(confirmation_id, None)
+
+                        decision = pending_entry.get("decision")
+                        if decision == "timeout":
+                            append_task_event(
+                                sid_int,
+                                "confirmation_decision",
+                                {
+                                    "confirmationId": confirmation_id,
+                                    "decision": "timeout",
+                                },
+                                status="timeout",
+                            )
+                        append_task_event(
+                            sid_int,
+                            "status",
+                            {
+                                "state": "running",
+                                "confirmationId": confirmation_id,
+                                "decision": decision,
+                            },
+                            status="running",
+                        )
+
+                        if decision != "approve":
+                            reason = (
+                                "用户拒绝执行"
+                                if decision == "reject"
+                                else "确认超时，未执行"
+                            )
+                            confirmed_ids = {item["call_id"] for item in confirmation_tasks}
+                            for item in confirmation_tasks:
+                                cancelled_payload = {
+                                    "tool": item["tc"]["name"],
+                                    "result": {"cancelled": True, "reason": reason},
+                                    "call_id": item["call_id"],
+                                    "round": tool_rounds,
+                                    "batch_id": batch_id,
+                                    "status": "cancelled",
+                                    "summary": reason,
+                                    "started_at": item["started_at"],
+                                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                                }
+                                append_task_event(
+                                    sid_int,
+                                    "tool_result",
+                                    cancelled_payload,
+                                    status="cancelled",
+                                    call_id=item["call_id"],
+                                )
+                                yield f"event: tool_result\ndata: {json.dumps(cancelled_payload, ensure_ascii=False)}\n\n"
+                                current_messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": item["tc"]["id"],
+                                    "content": json.dumps({"cancelled": True, "reason": reason}, ensure_ascii=False),
+                                })
+                                called_tools.discard(item["dedup_key"])
+                            tasks_to_run = [
+                                item for item in tasks_to_run
+                                if item["call_id"] not in confirmed_ids
+                            ]
+                            if not tasks_to_run:
+                                continue
 
                     # 并行执行所有工具
                     async def _run_one(tc, args_parsed, dedup_key, call_id):
@@ -701,7 +1029,7 @@ async def stream_chat(
                                     batch_results.append(t.result())
                             except Exception:
                                 pass
-                        yield f"event: thinking\ndata: {json.dumps({'text': '部分搜索超时，用已有结果整理回答'})}\n\n"
+                        yield thinking_sse("部分搜索超时，用已有结果整理回答")
 
                     # 标记已完成工具的 ID
                     done_ids = set()
@@ -743,7 +1071,26 @@ async def stream_chat(
                             result_parsed = {"text": str(result)}
                         workflow_meta = tool_result_workflow_meta(result_parsed)
                         finished_at = datetime.now(timezone.utc).isoformat()
-                        yield f"event: tool_result\ndata: {json.dumps({'tool': tc['name'], 'result': result_parsed, 'call_id': call_id, 'round': tool_rounds, 'batch_id': batch_id, 'status': workflow_meta['status'], 'summary': workflow_meta['summary'], 'started_at': call_started_at.get(call_id), 'finished_at': finished_at, 'duration_ms': br['duration_ms']})}\n\n"
+                        tool_result_payload = {
+                            "tool": tc["name"],
+                            "result": result_parsed,
+                            "call_id": call_id,
+                            "round": tool_rounds,
+                            "batch_id": batch_id,
+                            "status": workflow_meta["status"],
+                            "summary": workflow_meta["summary"],
+                            "started_at": call_started_at.get(call_id),
+                            "finished_at": finished_at,
+                            "duration_ms": br["duration_ms"],
+                        }
+                        append_task_event(
+                            sid_int,
+                            "tool_result",
+                            tool_result_payload,
+                            status=workflow_meta["status"],
+                            call_id=call_id,
+                        )
+                        yield f"event: tool_result\ndata: {json.dumps(tool_result_payload, ensure_ascii=False)}\n\n"
                         await asyncio.sleep(0.01)
 
                         current_messages.append({
@@ -778,7 +1125,26 @@ async def stream_chat(
                         finished_at = datetime.now(timezone.utc).isoformat()
                         started_dt = datetime.fromisoformat(d["started_at"])
                         duration_ms = round((datetime.now(timezone.utc) - started_dt).total_seconds() * 1000)
-                        yield f"event: tool_result\ndata: {json.dumps({'tool': tc['name'], 'result': {'cancelled': True, 'reason': '批次超时或新轮次取消'}, 'call_id': d['call_id'], 'round': tool_rounds, 'batch_id': batch_id, 'status': 'cancelled', 'summary': '批次超时或新轮次取消', 'started_at': d['started_at'], 'finished_at': finished_at, 'duration_ms': duration_ms})}\n\n"
+                        cancelled_payload = {
+                            "tool": tc["name"],
+                            "result": {"cancelled": True, "reason": "批次超时或新轮次取消"},
+                            "call_id": d["call_id"],
+                            "round": tool_rounds,
+                            "batch_id": batch_id,
+                            "status": "cancelled",
+                            "summary": "批次超时或新轮次取消",
+                            "started_at": d["started_at"],
+                            "finished_at": finished_at,
+                            "duration_ms": duration_ms,
+                        }
+                        append_task_event(
+                            sid_int,
+                            "tool_result",
+                            cancelled_payload,
+                            status="cancelled",
+                            call_id=d["call_id"],
+                        )
+                        yield f"event: tool_result\ndata: {json.dumps(cancelled_payload, ensure_ascii=False)}\n\n"
                         await asyncio.sleep(0.01)
                         current_messages.append({
                             "role": "tool",
@@ -790,6 +1156,7 @@ async def stream_chat(
                     continue
 
                 # 没有工具调用，本轮文本就是最终回复，结束循环
+                flush_plan_event()
                 full_content += round_text
                 break
 
@@ -820,7 +1187,7 @@ async def stream_chat(
                                     f_delta = chunk["choices"][0].get("delta", {})
                                     f_reasoning = f_delta.get("reasoning_content")
                                     if f_reasoning:
-                                        yield f"event: thinking\ndata: {json.dumps({'text': f_reasoning})}\n\n"
+                                        yield thinking_sse(f_reasoning)
                                     text = f_delta.get("content", "")
                                     if text:
                                         full_content += text
@@ -835,6 +1202,7 @@ async def stream_chat(
                     full_content = ""
 
             # 兜底：如果全程没产出任何内容，发一条提示
+            flush_plan_event()
             if not full_content:
                 full_content = "抱歉，处理你的请求时遇到了问题，请稍后重试。"
                 yield f"event: message\ndata: {json.dumps({'text': full_content})}\n\n"
@@ -883,11 +1251,43 @@ async def stream_chat(
                 except Exception:
                     pass
 
+            append_task_event(
+                sid_int,
+                "status",
+                {"state": "done"},
+                status="done",
+            )
             yield "event: done\ndata: {}\n\n"
 
         except httpx.HTTPError:
+            flush_plan_event()
+            append_task_event(
+                sid_int,
+                "error",
+                {"message": "AI 服务连接异常，请稍后重试"},
+                status="error",
+            )
+            append_task_event(
+                sid_int,
+                "status",
+                {"state": "error", "message": "AI 服务连接异常，请稍后重试"},
+                status="error",
+            )
             yield f"event: error\ndata: {json.dumps({'message': 'AI 服务连接异常，请稍后重试'})}\n\n"
         except Exception:
+            flush_plan_event()
+            append_task_event(
+                sid_int,
+                "error",
+                {"message": "服务暂时不可用，请稍后重试"},
+                status="error",
+            )
+            append_task_event(
+                sid_int,
+                "status",
+                {"state": "error", "message": "服务暂时不可用，请稍后重试"},
+                status="error",
+            )
             yield f"event: error\ndata: {json.dumps({'message': '服务暂时不可用，请稍后重试'})}\n\n"
 
     return StreamingResponse(

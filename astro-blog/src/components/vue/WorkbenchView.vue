@@ -113,8 +113,8 @@
             <button
               type="button"
               class="recent-task-delete"
-              :disabled="isRunning && session.id === sessionId"
-              :title="isRunning && session.id === sessionId ? '请先终止正在执行的任务' : '删除任务'"
+                :disabled="isTaskActive && session.id === sessionId"
+                :title="isTaskActive && session.id === sessionId ? '请先暂停或终止正在执行的任务' : '删除任务'"
               aria-label="删除任务"
               @click="deleteTaskSession(session)"
             >
@@ -677,20 +677,26 @@
               rows="1"
               placeholder="描述你想完成的内容任务..."
               @input="resizeComposer"
-              :disabled="isRunning"
+              :disabled="isTaskActive"
               @compositionstart="composerComposing = true"
               @compositionend="composerComposing = false"
               @keydown.enter.exact="handleComposerEnter"
             />
-            <button v-if="isRunning" class="send-button stop-button" type="button" aria-label="终止任务" @click="stopTask">
+            <button v-if="isTaskActive" class="send-button pause-button" type="button" aria-label="暂停任务" title="暂停任务" @click="pauseTask">
+              <svg viewBox="0 0 24 24"><path d="M9 6v12M15 6v12" /></svg>
+            </button>
+            <button v-if="isTaskActive" class="send-button stop-button" type="button" aria-label="终止任务" title="终止任务" @click="stopTask">
               <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+            </button>
+            <button v-else-if="canResumeTask" class="send-button resume-button" type="button" aria-label="继续任务" title="继续任务" @click="resumeTask">
+              <svg viewBox="0 0 24 24"><path d="M8 5l11 7-11 7V5z" /></svg>
             </button>
             <button v-else class="send-button" type="submit" :disabled="!draft.trim() || !loggedIn" aria-label="执行任务">
               <svg viewBox="0 0 24 24"><path d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
             </button>
           </div>
           <div class="composer-meta">
-            <span>{{ isRunning ? 'Agent 正在执行 · 可随时终止' : 'Enter 执行任务 · Shift + Enter 换行' }}</span>
+            <span>{{ taskComposerHint }}</span>
             <span v-if="uploadingFiles">正在上传资料...</span>
             <span v-else-if="attachedFiles.length">{{ attachedFiles.length }} 个资料待接入</span>
             <span v-else>可连接博客、知识库与上传资料</span>
@@ -770,7 +776,7 @@
               :key="mode.value"
               type="button"
               :class="{ active: agentMode === mode.value }"
-              :disabled="isRunning"
+              :disabled="isTaskActive"
               @click="agentMode = mode.value"
             >
               {{ mode.short }}
@@ -876,7 +882,7 @@
               </button>
             </div>
 
-            <div v-if="workflowNodes.length" class="workflow-plan-progress" :class="{ running: isRunning }">
+          <div v-if="workflowNodes.length" class="workflow-plan-progress" :class="{ running: isRunning }">
               <div>
                 <span>{{ workflowCurrentLabel }}</span>
                 <strong>{{ workflowProgress }}%</strong>
@@ -884,7 +890,36 @@
               <div class="workflow-progress-track">
                 <i :style="{ width: `${workflowProgress}%` }" />
               </div>
+          </div>
+
+          <div v-if="pendingConfirmation" class="workflow-confirmation" :class="{ expired: pendingConfirmation.live === false }">
+            <span class="workflow-confirmation-kicker">
+              <i />
+              {{ pendingConfirmation.live === false ? 'CONFIRMATION EXPIRED' : 'APPROVAL REQUIRED' }}
+            </span>
+            <strong>{{ pendingConfirmation.live === false ? '确认已失效' : '等待您确认写入操作' }}</strong>
+            <p>{{ pendingConfirmation.live === false ? '任务已暂停，请恢复后重新生成确认步骤。' : `即将执行：${pendingConfirmationLabel}` }}</p>
+            <div v-if="pendingConfirmation.live !== false" class="workflow-confirmation-list">
+              <div v-for="action in pendingConfirmation.actions" :key="action.callId">
+                <strong>{{ TOOL_NAMES[action.tool] || action.tool }}</strong>
+                <small>{{ confirmationActionSummary(action) }}</small>
+              </div>
             </div>
+            <div v-if="pendingConfirmation.live !== false" class="workflow-confirmation-actions">
+              <button type="button" class="approve" :disabled="confirmationSaving" @click="resolvePendingConfirmation('approve')">
+                {{ confirmationSaving ? '处理中...' : '确认执行' }}
+              </button>
+              <button type="button" :disabled="confirmationSaving" @click="resolvePendingConfirmation('reject')">拒绝</button>
+            </div>
+            <button v-else type="button" class="resume-plan" @click="resumeTask">恢复任务</button>
+          </div>
+
+          <div v-else-if="canResumeTask" class="workflow-resume-banner">
+            <span>{{ taskStatus === 'error' ? 'EXECUTION INTERRUPTED' : 'TASK PAUSED' }}</span>
+            <strong>{{ taskStatus === 'error' ? '任务执行中断' : '任务已暂停' }}</strong>
+            <p>保留现有计划和执行记录，从最后一个可用检查点继续。</p>
+            <button type="button" @click="resumeTask">从检查点继续</button>
+          </div>
 
             <div v-if="workflowStages.length" class="workflow-mini-list">
               <article
@@ -1166,12 +1201,12 @@ interface SessionItem {
   preview: string;
 }
 
-type TaskStatus = 'idle' | 'connecting' | 'running' | 'done' | 'error' | 'cancelled';
-type TaskEventType = 'user' | 'thinking' | 'tool' | 'text' | 'artifact' | 'error';
+type TaskStatus = 'idle' | 'connecting' | 'running' | 'waiting_confirmation' | 'paused' | 'done' | 'error' | 'cancelled';
+type TaskEventType = 'user' | 'thinking' | 'tool' | 'confirmation' | 'text' | 'artifact' | 'error';
 type AgentMode = 'readonly' | 'plan' | 'execute';
 type ContextPanelMode = 'preview' | 'workflow';
-type WorkflowNodeStatus = 'running' | 'done' | 'error' | 'cancelled';
-type WorkflowStageKind = 'intent' | 'analysis' | 'tools' | 'response' | 'artifact' | 'error';
+type WorkflowNodeStatus = 'running' | 'waiting' | 'done' | 'error' | 'cancelled';
+type WorkflowStageKind = 'intent' | 'analysis' | 'tools' | 'confirmation' | 'response' | 'artifact' | 'error';
 
 interface TaskEvent {
   id: number;
@@ -1191,6 +1226,8 @@ interface TaskEvent {
   finishedAt?: string;
   durationMs?: number;
   summary?: string;
+  confirmationId?: string;
+  actions?: PendingConfirmationAction[];
   url?: string;
   format?: string;
 }
@@ -1220,6 +1257,19 @@ interface WorkflowStageView {
   nodes: WorkflowNodeView[];
   batchId?: string;
   round?: number;
+}
+
+interface PendingConfirmationAction {
+  callId: string;
+  tool: string;
+  args?: Record<string, unknown>;
+}
+
+interface PendingConfirmation {
+  confirmationId: string;
+  batchId?: string;
+  actions: PendingConfirmationAction[];
+  live?: boolean;
 }
 
 type CapabilityKind = 'skill' | 'mcp' | 'prompt';
@@ -1346,6 +1396,9 @@ const contextPanelMode = ref<ContextPanelMode>('preview');
 const selectedArtifactId = ref<number | null>(null);
 const workflowExpanded = ref(false);
 const selectedWorkflowNodeId = ref<string | null>(null);
+const pendingConfirmation = ref<PendingConfirmation | null>(null);
+const confirmationSaving = ref(false);
+const resumeNextRequest = ref(false);
 const settingsForm = ref({
   nickname: '',
   email: '',
@@ -1361,6 +1414,21 @@ const userInitial = computed(() => displayName.value.slice(0, 1).toUpperCase());
 const userAvatarUrl = computed(() => getAvatarUrl(user.value?.avatar));
 const agentAvatarStorageKey = computed(() => `workbench:agentAvatar:${user.value?.id || 'guest'}`);
 const isRunning = computed(() => taskStatus.value === 'connecting' || taskStatus.value === 'running');
+const isTaskActive = computed(() => (
+  isRunning.value || taskStatus.value === 'waiting_confirmation'
+));
+const isWaitingConfirmation = computed(() => taskStatus.value === 'waiting_confirmation');
+const pendingConfirmationLabel = computed(() => (
+  pendingConfirmation.value?.actions
+    .map(action => TOOL_NAMES[action.tool] || action.tool)
+    .join('、') || '写入操作'
+));
+const canResumeTask = computed(() => (
+  !!sessionId.value && (taskStatus.value === 'paused' || taskStatus.value === 'error')
+));
+const lastUserPrompt = computed(() => (
+  [...taskEvents.value].reverse().find(event => event.type === 'user')?.content || taskTitle.value
+));
 const toolEvents = computed(() => taskEvents.value.filter(event => event.type === 'tool'));
 const artifacts = computed(() => taskEvents.value.filter(event => event.type === 'artifact'));
 const selectedArtifact = computed(() => (
@@ -1374,7 +1442,9 @@ const outputText = computed(() => taskEvents.value
   .map(event => event.content || '')
   .join('\n\n')
   .trim());
-const visibleTaskEvents = computed(() => taskEvents.value.filter(event => event.type !== 'tool'));
+const visibleTaskEvents = computed(() => (
+  taskEvents.value.filter(event => event.type !== 'tool' && event.type !== 'confirmation')
+));
 const workflowStages = computed<WorkflowStageView[]>(() => {
   const stages: WorkflowStageView[] = [];
   const toolStages = new Map<string, WorkflowStageView>();
@@ -1437,6 +1507,8 @@ const workflowStages = computed<WorkflowStageView[]>(() => {
       ? 'intent'
       : event.type === 'thinking'
         ? 'analysis'
+        : event.type === 'confirmation'
+          ? 'confirmation'
         : event.type === 'text'
           ? 'response'
           : event.type === 'artifact'
@@ -1479,6 +1551,7 @@ const workflowStages = computed<WorkflowStageView[]>(() => {
 const workflowNodes = computed(() => workflowStages.value.flatMap(stage => stage.nodes));
 const selectedWorkflowNode = computed(() => (
   workflowNodes.value.find(node => node.id === selectedWorkflowNodeId.value)
+  || [...workflowNodes.value].reverse().find(node => node.status === 'waiting')
   || [...workflowNodes.value].reverse().find(node => node.status === 'running')
   || workflowNodes.value[workflowNodes.value.length - 1]
   || null
@@ -1506,8 +1579,12 @@ const workflowProgress = computed(() => {
   return Math.min(100, Math.round((completed / workflowNodes.value.length) * 100));
 });
 const workflowCurrentLabel = computed(() => {
+  if (pendingConfirmation.value) return `等待确认：${pendingConfirmationLabel.value}`;
   const running = [...workflowNodes.value].reverse().find(node => node.status === 'running');
   if (running) return `正在执行：${running.title}`;
+  if (taskStatus.value === 'paused') return '任务已暂停，等待从检查点继续';
+  if (taskStatus.value === 'error') return '任务执行中断，可从检查点重试';
+  if (taskStatus.value === 'cancelled') return '任务已终止';
   if (workflowStats.value.errors) return `计划中有 ${workflowStats.value.errors} 个异常节点`;
   if (workflowNodes.value.length) return 'Agent 计划已执行完成';
   return '等待 Agent 生成计划';
@@ -1516,6 +1593,8 @@ const statusLabel = computed(() => ({
   idle: '空闲',
   connecting: '正在连接',
   running: '执行中',
+  waiting_confirmation: '等待确认',
+  paused: '已暂停',
   done: '已完成',
   error: '执行失败',
   cancelled: '已终止',
@@ -1523,8 +1602,19 @@ const statusLabel = computed(() => ({
 const statusTone = computed(() => ({
   ready: taskStatus.value === 'done',
   running: isRunning.value,
+  waiting: taskStatus.value === 'waiting_confirmation',
   error: taskStatus.value === 'error',
 }));
+const taskComposerHint = computed(() => ({
+  idle: 'Enter 执行任务 · Shift + Enter 换行',
+  connecting: 'Agent 正在连接 · 可暂停或终止',
+  running: 'Agent 正在执行 · 可暂停或终止',
+  waiting_confirmation: '写入操作等待确认',
+  paused: '任务已暂停 · 点击继续恢复执行',
+  done: '任务已完成',
+  error: '任务执行失败 · 可从检查点继续',
+  cancelled: '任务已终止',
+}[taskStatus.value]));
 const agentModes = [
   {
     value: 'readonly' as AgentMode,
@@ -1744,6 +1834,9 @@ function startNewTask() {
   selectedArtifactId.value = null;
   workflowExpanded.value = false;
   selectedWorkflowNodeId.value = null;
+  pendingConfirmation.value = null;
+  confirmationSaving.value = false;
+  resumeNextRequest.value = false;
   activeSection.value = 'overview';
   agentMode.value = defaultAgentMode.value;
   draft.value = '';
@@ -1832,7 +1925,7 @@ function appendThinking(content: string) {
   scrollTaskFeed();
 }
 
-function settleRunningTools(status: 'done' | 'error' = 'done') {
+function settleRunningTools(status: 'done' | 'error' | 'cancelled' = 'done') {
   taskEvents.value
     .filter(event => event.type === 'tool' && event.status === 'running')
     .forEach(event => {
@@ -1847,6 +1940,14 @@ function toolDescription(event: TaskEvent) {
     .slice(0, 2)
     .map(([key, value]) => `${key}: ${String(value).slice(0, 50)}`);
   return values.length ? values.join(' · ') : 'Agent 正在调用工作区能力';
+}
+
+function confirmationActionSummary(action: PendingConfirmationAction) {
+  const values = Object.entries(action.args || {})
+    .filter(([, value]) => value !== null && value !== undefined && typeof value !== 'object')
+    .slice(0, 3)
+    .map(([key, value]) => `${key}: ${String(value).slice(0, 80)}`);
+  return values.length ? values.join(' · ') : '未提供额外参数';
 }
 
 function summarizeToolResult(result: unknown) {
@@ -1946,6 +2047,18 @@ function workflowNodeFromEvent(event: TaskEvent): WorkflowNodeView {
       status: 'done',
     };
   }
+  if (event.type === 'confirmation') {
+    return {
+      id: `node-${event.id}`,
+      eventId: event.id,
+      kind: 'confirmation',
+      mark: '审',
+      title: '等待人工确认',
+      detail: event.content || '该步骤会修改博客或生成文件，需要用户确认后继续。',
+      meta: event.status === 'waiting' ? '等待确认' : '确认完成',
+      status: event.status || 'waiting',
+    };
+  }
   if (event.type === 'artifact') {
     return {
       id: `node-${event.id}`,
@@ -1975,6 +2088,7 @@ function workflowStageTitle(kind: WorkflowStageKind) {
     intent: '计划输入',
     analysis: '计划与判断',
     tools: '执行步骤',
+    confirmation: '人工确认',
     response: '计划结果',
     artifact: '交付结果',
     error: '中断处理',
@@ -1983,6 +2097,7 @@ function workflowStageTitle(kind: WorkflowStageKind) {
 
 function aggregateWorkflowStatus(nodes: WorkflowNodeView[]): WorkflowNodeStatus {
   if (nodes.some(node => node.status === 'running')) return 'running';
+  if (nodes.some(node => node.status === 'waiting')) return 'waiting';
   if (nodes.some(node => node.status === 'error')) return 'error';
   if (nodes.length > 0 && nodes.every(node => node.status === 'cancelled')) return 'cancelled';
   return 'done';
@@ -1991,6 +2106,7 @@ function aggregateWorkflowStatus(nodes: WorkflowNodeView[]): WorkflowNodeStatus 
 function workflowStatusLabel(status: WorkflowNodeStatus) {
   return {
     running: '运行中',
+    waiting: '待确认',
     done: '完成',
     error: '失败',
     cancelled: '已取消',
@@ -2118,21 +2234,24 @@ async function ensureSession(title: string) {
 
 async function runTask() {
   const text = draft.value.trim();
-  if (!text || isRunning.value) return;
+  if (!text || isTaskActive.value) return;
   if (!loggedIn.value) {
     window.location.href = '/auth/login';
     return;
   }
 
   const token = getToken() || '';
+  const resumeRequest = resumeNextRequest.value;
+  resumeNextRequest.value = false;
   taskStatus.value = 'connecting';
   taskTitle.value ||= text.slice(0, 48);
   contextPanelMode.value = 'workflow';
   selectedArtifactId.value = null;
   workflowExpanded.value = false;
   selectedWorkflowNodeId.value = null;
-  pushEvent({ type: 'user', content: text });
+  if (!resumeRequest) pushEvent({ type: 'user', content: text });
   draft.value = '';
+  pendingConfirmation.value = null;
   resizeComposer();
 
   try {
@@ -2163,6 +2282,7 @@ async function runTask() {
         sessionId: activeSession,
         userMessage: fullText,
         agentMode: agentMode.value,
+        resume: resumeRequest,
       }),
       signal: streamCtrl.value.signal,
       openWhenHidden: true,
@@ -2183,6 +2303,34 @@ async function runTask() {
             appendThinking(data.text || '');
           } catch {
             appendThinking(raw);
+          }
+        } else if (eventName === 'confirmation_required') {
+          closeThinking();
+          try {
+            const data = JSON.parse(raw);
+            pendingConfirmation.value = {
+              confirmationId: data.confirmationId,
+              batchId: data.batchId,
+              actions: data.actions || [],
+              live: true,
+            };
+            contextSourcesOpen.value = false;
+            contextOpen.value = true;
+            for (const action of data.actions || []) {
+              const toolEvent = toolEvents.value.find(item => item.callId === action.callId);
+              if (toolEvent) toolEvent.status = 'waiting';
+            }
+            taskStatus.value = 'waiting_confirmation';
+            pushEvent({
+              type: 'confirmation',
+              status: 'waiting',
+              content: `即将执行：${(data.actions || []).map((action: any) => TOOL_NAMES[action.tool] || action.tool).join('、')}`,
+              confirmationId: data.confirmationId,
+              actions: data.actions,
+            });
+            contextPanelMode.value = 'workflow';
+          } catch {
+            pendingConfirmation.value = null;
           }
         } else if (eventName === 'tool_call') {
           closeThinking();
@@ -2239,6 +2387,20 @@ async function runTask() {
                 }
               }
             }
+            if (
+              pendingConfirmation.value?.actions.some(action => action.callId === data.call_id)
+              && taskStatus.value === 'waiting_confirmation'
+            ) {
+              const confirmationEvent = taskEvents.value.find(
+                event => event.type === 'confirmation'
+                  && event.confirmationId === pendingConfirmation.value?.confirmationId,
+              );
+              if (confirmationEvent && data.status === 'cancelled') {
+                confirmationEvent.status = 'cancelled';
+              }
+              pendingConfirmation.value = null;
+              taskStatus.value = 'running';
+            }
           } catch {
             // Ignore malformed tool payloads; the next assistant message still renders.
           }
@@ -2260,6 +2422,7 @@ async function runTask() {
           settleRunningTools('done');
           closedNormally = true;
           taskStatus.value = 'done';
+          pendingConfirmation.value = null;
           streamCtrl.value = null;
           fetchSessions();
         } else if (eventName === 'error') {
@@ -2269,13 +2432,14 @@ async function runTask() {
           try { message = JSON.parse(raw).message || message; } catch { /* ignore */ }
           pushEvent({ type: 'error', content: message });
           taskStatus.value = 'error';
+          pendingConfirmation.value = null;
           streamCtrl.value = null;
         }
       },
       onclose() {
         closeThinking();
         settleRunningTools(taskStatus.value === 'error' ? 'error' : 'done');
-        if (!closedNormally && taskStatus.value !== 'cancelled' && taskStatus.value !== 'error') {
+        if (!closedNormally && !['cancelled', 'paused', 'waiting_confirmation', 'error'].includes(taskStatus.value)) {
           taskStatus.value = 'done';
         }
         streamCtrl.value = null;
@@ -2300,37 +2464,263 @@ async function runTask() {
 }
 
 function stopTask() {
-  if (!isRunning.value) return;
+  if (!isTaskActive.value) return;
   taskStatus.value = 'cancelled';
   closeThinking();
-  settleRunningTools('done');
+  settleRunningTools('cancelled');
+  pendingConfirmation.value = null;
   streamCtrl.value?.abort();
   streamCtrl.value = null;
+  void persistTaskStatus('cancelled');
+}
+
+function pauseTask() {
+  if (!isTaskActive.value) return;
+  taskStatus.value = 'paused';
+  closeThinking();
+  settleRunningTools('cancelled');
+  if (pendingConfirmation.value) pendingConfirmation.value.live = false;
+  streamCtrl.value?.abort();
+  streamCtrl.value = null;
+  void persistTaskStatus('paused');
+}
+
+async function persistTaskStatus(status: 'paused' | 'cancelled') {
+  if (!sessionId.value) return;
+  try {
+    await fetch(`/api/psychological-chat/session/${encodeURIComponent(sessionId.value)}/task-status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', token: getToken() || '' },
+      body: JSON.stringify({ status }),
+    });
+  } catch {
+    // Local task state remains usable if persistence is temporarily unavailable.
+  }
+}
+
+async function resolvePendingConfirmation(decision: 'approve' | 'reject') {
+  if (!pendingConfirmation.value || !sessionId.value || confirmationSaving.value) return;
+  confirmationSaving.value = true;
+  const confirmationId = pendingConfirmation.value.confirmationId;
+  try {
+    const response = await fetch(
+      `/api/psychological-chat/session/${encodeURIComponent(sessionId.value)}/confirmation`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', token: getToken() || '' },
+        body: JSON.stringify({ confirmationId, decision }),
+      },
+    );
+    const payload = await response.json();
+    if (!response.ok || payload.code !== '200') {
+      throw new Error(payload.detail || payload.msg || '确认操作失败');
+    }
+    const confirmation = taskEvents.value.find(
+      event => event.type === 'confirmation' && event.confirmationId === confirmationId,
+    );
+    if (confirmation) confirmation.status = decision === 'approve' ? 'done' : 'cancelled';
+    for (const action of pendingConfirmation.value.actions) {
+      const toolEvent = toolEvents.value.find(item => item.callId === action.callId);
+      if (toolEvent) toolEvent.status = decision === 'approve' ? 'running' : 'cancelled';
+    }
+    pendingConfirmation.value = null;
+    taskStatus.value = 'running';
+  } catch (error) {
+    if (pendingConfirmation.value) pendingConfirmation.value.live = false;
+    taskStatus.value = 'paused';
+    pushEvent({
+      type: 'error',
+      content: error instanceof Error ? error.message : '确认操作失败',
+    });
+  } finally {
+    confirmationSaving.value = false;
+  }
+}
+
+async function resumeTask() {
+  if (!canResumeTask.value || !sessionId.value) return;
+  pendingConfirmation.value = null;
+  resumeNextRequest.value = true;
+  draft.value = taskStatus.value === 'paused'
+    ? '请从上次暂停或确认中断的位置继续任务。先核验已完成步骤，避免重复写入，然后继续执行未完成部分。'
+    : '上次执行失败。请根据已有计划和工具结果从可恢复点继续，先核验不确定的操作，避免重复修改。';
+  await runTask();
+  if (resumeNextRequest.value) resumeNextRequest.value = false;
+}
+
+function restoreTaskEvents(messages: any[], savedEvents: any[]) {
+  const timeline = [
+    ...(messages || []).map((message, index) => ({
+      kind: 'message' as const,
+      order: index,
+      timestamp: Date.parse(message.createdAt || '') || index,
+      data: message,
+    })),
+    ...(savedEvents || []).map((event, index) => ({
+      kind: 'event' as const,
+      order: index,
+      timestamp: Date.parse(event.createdAt || '') || (messages?.length || 0) + index,
+      data: event,
+    })),
+  ].sort((a, b) => a.timestamp - b.timestamp || a.order - b.order);
+
+  const restored: TaskEvent[] = [];
+  const toolsByCallId = new Map<string, TaskEvent>();
+  const confirmations = new Map<string, TaskEvent>();
+
+  timeline.forEach(entry => {
+    if (entry.kind === 'message') {
+      const message = entry.data;
+      restored.push({
+        id: nextEventId(),
+        type: message.role === 'user' ? 'user' : 'text',
+        content: message.content,
+      });
+      return;
+    }
+
+    const event = entry.data;
+    const payload = event.payload || {};
+    if (event.type === 'thinking') {
+      restored.push({
+        id: nextEventId(),
+        type: 'thinking',
+        content: payload.text || '',
+        status: 'done',
+      });
+      return;
+    }
+    if (event.type === 'tool_call') {
+      const toolEvent: TaskEvent = {
+        id: nextEventId(),
+        type: 'tool',
+        tool: payload.tool,
+        displayName: TOOL_NAMES[payload.tool] || payload.tool,
+        status: 'running',
+        args: payload.args,
+        callId: payload.call_id,
+        round: payload.round,
+        batchId: payload.batch_id,
+        batchIndex: payload.batch_index,
+        batchSize: payload.batch_size,
+        startedAt: payload.started_at,
+      };
+      restored.push(toolEvent);
+      if (payload.call_id) toolsByCallId.set(String(payload.call_id), toolEvent);
+      return;
+    }
+    if (event.type === 'tool_result') {
+      const toolEvent = toolsByCallId.get(String(payload.call_id || ''))
+        || [...restored].reverse().find(item => item.type === 'tool' && item.tool === payload.tool);
+      if (toolEvent) {
+        toolEvent.status = ['done', 'error', 'cancelled', 'waiting'].includes(payload.status)
+          ? payload.status
+          : 'done';
+        toolEvent.result = payload.result;
+        toolEvent.summary = payload.summary;
+        toolEvent.startedAt ||= payload.started_at;
+        toolEvent.finishedAt = payload.finished_at;
+        toolEvent.durationMs = payload.duration_ms;
+      }
+      const artifact = artifactFromToolResult(payload.result, payload.tool);
+      if (artifact && !restored.some(item => item.type === 'artifact' && item.url === artifact.url)) {
+        restored.push({
+          id: nextEventId(),
+          type: 'artifact',
+          content: artifact.filename,
+          url: artifact.url,
+          format: artifact.format,
+        });
+      }
+      return;
+    }
+    if (event.type === 'confirmation_required') {
+      const confirmation: TaskEvent = {
+        id: nextEventId(),
+        type: 'confirmation',
+        status: 'waiting',
+        content: `即将执行：${(payload.actions || []).map((action: any) => TOOL_NAMES[action.tool] || action.tool).join('、')}`,
+        confirmationId: payload.confirmationId,
+        actions: payload.actions,
+      };
+      restored.push(confirmation);
+      for (const action of payload.actions || []) {
+        const toolEvent = toolsByCallId.get(String(action.callId || ''));
+        if (toolEvent) toolEvent.status = 'waiting';
+      }
+      if (payload.confirmationId) confirmations.set(String(payload.confirmationId), confirmation);
+      return;
+    }
+    if (event.type === 'confirmation_decision') {
+      const confirmation = confirmations.get(String(payload.confirmationId || ''));
+      if (confirmation) {
+        confirmation.status = payload.decision === 'approve' ? 'done' : 'cancelled';
+      }
+      for (const action of confirmation?.actions || []) {
+        const toolEvent = toolsByCallId.get(String(action.callId || ''));
+        if (toolEvent) {
+          toolEvent.status = payload.decision === 'approve' ? 'running' : 'cancelled';
+        }
+      }
+      return;
+    }
+    if (event.type === 'error') {
+      restored.push({
+        id: nextEventId(),
+        type: 'error',
+        content: payload.message || '任务执行失败',
+      });
+    }
+  });
+
+  return restored;
 }
 
 async function loadTaskSession(id: string) {
-  if (isRunning.value) return;
+  if (isTaskActive.value) return;
   taskStatus.value = 'connecting';
   navOpen.value = false;
   try {
-    const response = await fetch(`/api/psychological-chat/session/${id}/messages`, {
-      headers: { token: getToken() || '' },
-    });
-    const payload = await response.json();
-    if (!response.ok || payload.code !== '200') {
-      throw new Error(payload.detail || payload.msg || '任务加载失败');
+    const [messageResponse, stateResponse] = await Promise.all([
+      fetch(`/api/psychological-chat/session/${id}/messages`, {
+        headers: { token: getToken() || '' },
+      }),
+      fetch(`/api/psychological-chat/session/${id}/task-state`, {
+        headers: { token: getToken() || '' },
+      }),
+    ]);
+    const messagePayload = await messageResponse.json();
+    const statePayload = await stateResponse.json();
+    if (!messageResponse.ok || messagePayload.code !== '200') {
+      throw new Error(messagePayload.detail || messagePayload.msg || '任务消息加载失败');
     }
+    if (!stateResponse.ok || statePayload.code !== '200') {
+      throw new Error(statePayload.detail || statePayload.msg || '任务计划加载失败');
+    }
+
     sessionId.value = id;
-    taskEvents.value = (payload.data || []).map((message: any) => ({
-      id: nextEventId(),
-      type: message.role === 'user' ? 'user' : 'text',
-      content: message.content,
-    }));
+    taskEvents.value = restoreTaskEvents(
+      messagePayload.data || [],
+      statePayload.data?.events || [],
+    );
     const firstUserMessage = taskEvents.value.find(event => event.type === 'user')?.content;
     const selectedSession = sessions.value.find(item => item.id === id);
     taskTitle.value = firstUserMessage || selectedSession?.title || '历史任务';
-    taskStatus.value = 'done';
+    const savedStatus = String(
+      statePayload.data?.events?.length ? statePayload.data?.status || 'done' : 'done',
+    ) as TaskStatus;
+    pendingConfirmation.value = statePayload.data?.pendingConfirmation || null;
+    if (pendingConfirmation.value) {
+      pendingConfirmation.value.live = false;
+      contextSourcesOpen.value = false;
+      contextOpen.value = true;
+    }
+    taskStatus.value = (savedStatus === 'running' || savedStatus === 'waiting_confirmation')
+      ? 'paused'
+      : savedStatus;
+    selectedArtifactId.value = artifacts.value[0]?.id || null;
     draft.value = '';
+    contextPanelMode.value = 'workflow';
     scrollTaskFeed(true);
   } catch (error) {
     taskStatus.value = 'error';
@@ -3718,6 +4108,11 @@ onUnmounted(() => {
 .task-state.running {
   background: rgba(91, 123, 255, 0.09);
   color: var(--wb-blue-deep);
+}
+
+.task-state.waiting {
+  background: rgba(217, 153, 51, 0.12);
+  color: #9a651a;
 }
 
 .task-state.error {
@@ -5733,9 +6128,31 @@ onUnmounted(() => {
   box-shadow: 0 6px 14px rgba(239, 68, 68, 0.2);
 }
 
+.send-button.pause-button {
+  background: #d39a3d;
+  box-shadow: 0 6px 14px rgba(211, 154, 61, 0.2);
+}
+
+.send-button.resume-button {
+  background: #279763;
+  box-shadow: 0 6px 14px rgba(39, 151, 99, 0.2);
+}
+
 .send-button svg {
   width: 15px;
   height: 15px;
+}
+
+.send-button.pause-button svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+.send-button.resume-button svg {
+  fill: currentColor;
+  stroke: none;
 }
 
 .composer-meta {
@@ -6486,6 +6903,164 @@ onUnmounted(() => {
   font-size: calc(var(--wb-font-scale) * 8px);
 }
 
+.workflow-confirmation {
+  margin: 0 0 11px;
+  padding: 11px;
+  border: 1px solid rgba(211, 154, 61, 0.26);
+  border-radius: 11px;
+  background:
+    linear-gradient(135deg, rgba(255, 244, 218, 0.9), rgba(255, 251, 243, 0.72));
+}
+
+.workflow-confirmation.expired {
+  border-color: var(--wb-line);
+  background: rgba(244, 246, 250, 0.72);
+}
+
+.workflow-confirmation-kicker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #9b6b23;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: calc(var(--wb-font-scale) * 7px);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.workflow-confirmation-kicker > i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #d49a3e;
+  box-shadow: 0 0 0 3px rgba(212, 154, 62, 0.12);
+}
+
+.workflow-confirmation > strong {
+  display: block;
+  margin-top: 7px;
+  color: #604a2a;
+  font-size: calc(var(--wb-font-scale) * 10px);
+}
+
+.workflow-confirmation > p {
+  margin: 4px 0 0;
+  color: #91764f;
+  font-size: calc(var(--wb-font-scale) * 8px);
+  line-height: 1.55;
+}
+
+.workflow-confirmation-list {
+  margin-top: 8px;
+  display: grid;
+  gap: 5px;
+}
+
+.workflow-confirmation-list > div {
+  padding: 7px 8px;
+  border: 1px solid rgba(152, 105, 31, 0.13);
+  border-radius: 7px;
+  display: grid;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.workflow-confirmation-list strong {
+  color: #72552b;
+  font-size: calc(var(--wb-font-scale) * 8px);
+}
+
+.workflow-confirmation-list small {
+  overflow: hidden;
+  color: #a1845b;
+  font-size: calc(var(--wb-font-scale) * 7px);
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-confirmation-actions {
+  margin-top: 9px;
+  display: flex;
+  gap: 6px;
+}
+
+.workflow-confirmation-actions button,
+.workflow-confirmation .resume-plan {
+  height: 29px;
+  padding: 0 10px;
+  border: 1px solid rgba(152, 105, 31, 0.18);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.62);
+  color: #846433;
+  font: inherit;
+  font-size: calc(var(--wb-font-scale) * 8px);
+  cursor: pointer;
+}
+
+.workflow-confirmation-actions button.approve {
+  border-color: #b57925;
+  background: #b57925;
+  color: white;
+  font-weight: 650;
+}
+
+.workflow-confirmation-actions button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.workflow-confirmation .resume-plan {
+  margin-top: 9px;
+  border-color: #2b8c60;
+  background: #2b8c60;
+  color: white;
+}
+
+.workflow-resume-banner {
+  margin: 0 0 11px;
+  padding: 11px;
+  border: 1px solid rgba(43, 140, 96, 0.2);
+  border-radius: 11px;
+  display: grid;
+  gap: 4px;
+  background: linear-gradient(135deg, rgba(233, 247, 239, 0.9), rgba(248, 252, 249, 0.72));
+}
+
+.workflow-resume-banner > span {
+  color: #4d866b;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: calc(var(--wb-font-scale) * 7px);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.workflow-resume-banner > strong {
+  color: #315c48;
+  font-size: calc(var(--wb-font-scale) * 10px);
+}
+
+.workflow-resume-banner > p {
+  margin: 0;
+  color: #6f877a;
+  font-size: calc(var(--wb-font-scale) * 8px);
+  line-height: 1.5;
+}
+
+.workflow-resume-banner > button {
+  width: fit-content;
+  height: 29px;
+  margin-top: 4px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: #2b8c60;
+  color: white;
+  font: inherit;
+  font-size: calc(var(--wb-font-scale) * 8px);
+  cursor: pointer;
+}
+
 .workflow-progress-track {
   position: relative;
   height: 4px;
@@ -6579,6 +7154,12 @@ onUnmounted(() => {
   box-shadow: 0 0 0 4px rgba(91, 123, 255, 0.08);
 }
 
+.workflow-mini-stage.status-waiting .workflow-mini-rail > span {
+  background: #d49a3e;
+  color: white;
+  box-shadow: 0 0 0 4px rgba(212, 154, 62, 0.1);
+}
+
 .workflow-mini-stage.status-running .workflow-mini-rail > i {
   width: 2px;
   background: linear-gradient(180deg, #8ba3ff, #5b7bff, #8ba3ff);
@@ -6653,6 +7234,11 @@ onUnmounted(() => {
   color: #9d681d;
 }
 
+.workflow-node-mark.kind-confirmation {
+  background: #fff1d5;
+  color: #9c681d;
+}
+
 .workflow-node-mark.kind-tool {
   background: #e7f6ee;
   color: #2d7d57;
@@ -6700,6 +7286,12 @@ onUnmounted(() => {
 .workflow-status-dot.status-running {
   background: var(--wb-blue);
   box-shadow: 0 0 0 3px rgba(91, 123, 255, 0.1);
+  animation: workflow-live-pulse 1.8s ease-in-out infinite;
+}
+
+.workflow-status-dot.status-waiting {
+  background: #d49a3e;
+  box-shadow: 0 0 0 3px rgba(212, 154, 62, 0.12);
   animation: workflow-live-pulse 1.8s ease-in-out infinite;
 }
 
@@ -6962,6 +7554,11 @@ onUnmounted(() => {
   color: var(--flow-blue-deep);
 }
 
+.workflow-run-state.waiting {
+  background: #fff3dc;
+  color: #93611b;
+}
+
 .workflow-run-state.error {
   background: #fdecec;
   color: #b74747;
@@ -7134,6 +7731,13 @@ onUnmounted(() => {
   box-shadow: 0 0 0 5px rgba(91, 123, 255, 0.09);
 }
 
+.workflow-stage.status-waiting .workflow-stage-rail > span {
+  border-color: rgba(212, 154, 62, 0.34);
+  background: #d49a3e;
+  color: white;
+  box-shadow: 0 0 0 5px rgba(212, 154, 62, 0.1);
+}
+
 .workflow-stage.status-error .workflow-stage-rail > span {
   border-color: rgba(210, 79, 79, 0.25);
   background: #fff0f0;
@@ -7193,6 +7797,11 @@ onUnmounted(() => {
   color: var(--flow-blue-deep);
 }
 
+.workflow-stage-heading > small.status-waiting {
+  background: #fff3dc;
+  color: #95631c;
+}
+
 .workflow-stage-heading > small.status-error {
   background: #fdecec;
   color: #b64646;
@@ -7248,6 +7857,10 @@ onUnmounted(() => {
 
 .workflow-node-card.status-running {
   border-color: rgba(91, 123, 255, 0.24);
+}
+
+.workflow-node-card.status-waiting {
+  border-color: rgba(212, 154, 62, 0.28);
 }
 
 .workflow-node-card.status-error {
@@ -7439,6 +8052,10 @@ onUnmounted(() => {
 .workflow-inspector-state.status-running > i {
   background: var(--flow-blue);
   box-shadow: 0 0 0 4px rgba(91, 123, 255, 0.1);
+}
+.workflow-inspector-state.status-waiting > i {
+  background: #d49a3e;
+  box-shadow: 0 0 0 4px rgba(212, 154, 62, 0.1);
 }
 .workflow-inspector-state.status-error > i { background: #d24f4f; }
 .workflow-inspector-state.status-cancelled > i { background: #d49a3e; }
@@ -8168,6 +8785,8 @@ onUnmounted(() => {
 :global(.dark-mode .workflow-mini-card),
 :global(.dark-mode .workflow-mini-batch),
 :global(.dark-mode .workflow-plan-progress),
+:global(.dark-mode .workflow-confirmation),
+:global(.dark-mode .workflow-resume-banner),
 :global(.dark-mode .workflow-mini-toolbar > button),
 :global(.dark-mode .article-feed-sync > button),
 :global(.dark-mode .article-row-actions button) {
@@ -8204,6 +8823,39 @@ onUnmounted(() => {
 :global(.dark-mode .workflow-mini-branch small),
 :global(.dark-mode .workflow-plan-progress span) {
   color: #9ca3b8;
+}
+
+:global(.dark-mode .workflow-confirmation) {
+  border-color: rgba(212, 154, 62, 0.22);
+  background: rgba(53, 43, 28, 0.88);
+}
+
+:global(.dark-mode .workflow-confirmation-list > div) {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+:global(.dark-mode .workflow-confirmation strong),
+:global(.dark-mode .workflow-confirmation-list strong) {
+  color: #f0d8aa;
+}
+
+:global(.dark-mode .workflow-confirmation > p),
+:global(.dark-mode .workflow-confirmation-list small) {
+  color: #bfa779;
+}
+
+:global(.dark-mode .workflow-resume-banner) {
+  border-color: rgba(58, 168, 114, 0.22);
+  background: rgba(27, 50, 39, 0.88);
+}
+
+:global(.dark-mode .workflow-resume-banner > strong) {
+  color: #b7e8cf;
+}
+
+:global(.dark-mode .workflow-resume-banner > p) {
+  color: #91b5a1;
 }
 
 :global(.dark-mode .context-tabs),

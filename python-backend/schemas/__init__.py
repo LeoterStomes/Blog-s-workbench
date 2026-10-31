@@ -3,4 +3,9 @@ from .user import UserLoginRequest, UserRegisterRequest, UserUpdateRequest, Pass
 from .article import ArticleSimpleResponse, ArticleDetailResponse, PaginatedArticles
 from .category import CategoryResponse
 from .favorite import FavoriteResponse, PaginatedFavorites
-from .chat import ChatSessionStartRequest, ChatStreamRequest
+from .chat import (
+    ChatSessionStartRequest,
+    ChatStreamRequest,
+    ChatTaskStatusRequest,
+    ChatConfirmationRequest,
+)

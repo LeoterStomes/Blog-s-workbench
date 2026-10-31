@@ -67,4 +67,8 @@ if (!/workflow-card-scan/i.test(workbenchCss) || !/workflow-rail-flow/i.test(wor
   throw new Error('Running Agent plan nodes must retain their status animations');
 }
 
+if (!workbenchJs.includes('confirmation_required') || !workbenchJs.includes('task-state')) {
+  throw new Error('Workbench build must include durable task state and write confirmations');
+}
+
 console.log('Workbench CSS scope check passed');
