@@ -83,4 +83,8 @@ if (!allClientJs.includes('content-adaptive-color') || !allClientCss.includes('d
   throw new Error('Agent and article HTML must keep readable inline-color fallbacks');
 }
 
+if (!/\[data-content-surface=dark\][^{}]*:where\(th,td\)[^{}]*\{[^}]*background-color:transparent/i.test(allClientCss)) {
+  throw new Error('Dark table rows must let dark surfaces show through their header and data cells');
+}
+
 console.log('Workbench CSS scope check passed');
