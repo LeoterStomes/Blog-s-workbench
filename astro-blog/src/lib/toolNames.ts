@@ -10,6 +10,7 @@ export const TOOL_NAMES: Record<string, string> = {
   get_recent_articles: '最新文章',
   create_draft: '创建草稿',
   update_article: '编辑文章',
+  apply_humanized_article: '应用去 AI 味改写',
   list_drafts: '列出草稿',
   set_status: '发布/下架',
   delete_article: '删除文章',

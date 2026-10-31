@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from database import Base
 from models import KnowledgeArticle, KnowledgeCategory, User
 from services.agent_service import _get_article, _list_articles, _search_articles
+from services.prompt_builder import get_prompt_catalog, get_skill_catalog
 
 
 @compiles(BigInteger, "sqlite")
@@ -89,6 +90,17 @@ class AgentCatalogTest(unittest.TestCase):
 
         self.assertEqual(result["search_type"], "keyword_fallback")
         self.assertGreater(result["count"], 0)
+
+    def test_humanizer_voice_prompt_and_article_skill_are_in_catalogs(self):
+        skills = {skill["stem"]: skill for skill in get_skill_catalog()}
+        prompts = {prompt["name"]: prompt for prompt in get_prompt_catalog()}
+
+        article_humanizer = skills["article-humanizer"]
+        self.assertEqual(article_humanizer["category"], "写作规范")
+        self.assertIn("去 AI 味", article_humanizer["triggers"])
+        self.assertIn("apply_humanized_article", article_humanizer["tools"])
+        self.assertIn("natural-voice", prompts)
+        self.assertTrue(prompts["natural-voice"]["always"])
 
 
 if __name__ == "__main__":

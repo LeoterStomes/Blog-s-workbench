@@ -101,6 +101,7 @@ WRITE_TOOLS = {
     "create_draft",
     "export_file",
     "update_article",
+    "apply_humanized_article",
     "set_status",
     "delete_article",
     "submit_capability_draft",

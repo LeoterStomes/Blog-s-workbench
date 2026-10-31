@@ -19,6 +19,7 @@ TOOLS_SCHEMA = [
     {"type":"function","function":{"name":"get_recent_articles","description":"Get the most recent published articles","parameters":{"type":"object","properties":{"limit":{"type":"integer","description":"Max results, default 5","default":5}}}}},
     {"type":"function","function":{"name":"create_draft","description":"Create a draft blog article","parameters":{"type":"object","properties":{"title":{"type":"string","description":"Article title"},"content":{"type":"string","description":"Article content (HTML)"},"summary":{"type":"string","description":"Summary, optional"},"tags":{"type":"string","description":"Comma-separated tags"},"category_id":{"type":"integer","description":"Category ID, optional"},"cover_image":{"type":"string","description":"Cover image URL, optional"}},"required":["title","content"]}}},
     {"type":"function","function":{"name":"update_article","description":"Update an existing article/draft by ID. Change title/content/summary/tags/category/cover. Use get_article first to read current content, then edit it.","parameters":{"type":"object","properties":{"article_id":{"type":"string","description":"Article ID (UUID)"},"title":{"type":"string","description":"New title (optional)"},"content":{"type":"string","description":"New HTML content (optional)"},"summary":{"type":"string","description":"New summary (optional)"},"tags":{"type":"string","description":"New comma-separated tags (optional)"},"category_id":{"type":"integer","description":"New category ID (optional)"},"cover_image":{"type":"string","description":"New cover image URL (optional)"}},"required":["article_id"]}}},
+    {"type":"function","function":{"name":"apply_humanized_article","description":"Apply a humanized prose rewrite to an article after deterministic fact checks. Preserve the original HTML structure, links, images, code, numbers, dates, quotations, and claims. If validation fails, nothing is written. Use this instead of update_article for Article Humanizer tasks.","parameters":{"type":"object","properties":{"article_id":{"type":"string","description":"Article ID (UUID)"},"content":{"type":"string","description":"Complete rewritten HTML content"},"change_summary":{"type":"string","description":"Short summary of prose changes"}},"required":["article_id","content"]}}},
     {"type":"function","function":{"name":"list_drafts","description":"List draft articles (status=draft). Use to find the ID of a draft so you can edit or publish it.","parameters":{"type":"object","properties":{"limit":{"type":"integer","description":"Max results, default 10","default":10}}}}},
     {"type":"function","function":{"name":"set_status","description":"Publish (status=1) or unpublish/draft (status=0) an article by ID.","parameters":{"type":"object","properties":{"article_id":{"type":"string","description":"Article ID (UUID)"},"status":{"type":"integer","description":"1=publish, 0=unpublish"}},"required":["article_id","status"]}}},
     {"type":"function","function":{"name":"delete_article","description":"Delete an article/draft by ID.","parameters":{"type":"object","properties":{"article_id":{"type":"string","description":"Article ID (UUID)"}},"required":["article_id"]}}},
@@ -102,6 +103,14 @@ async def execute_tool(name: str, args: dict, db: Session, user_id: int | None =
     elif name == "get_recent_articles": return _get_recent(db, args.get("limit",5))
     elif name == "create_draft": return _create_draft(db, args)
     elif name == "update_article": return _update_article(db, args)
+    elif name == "apply_humanized_article":
+        from .article_humanizer_service import apply_humanized_article
+        return apply_humanized_article(
+            db,
+            str(args.get("article_id") or ""),
+            str(args.get("content") or ""),
+            str(args.get("change_summary") or ""),
+        )
     elif name == "list_drafts": return _list_drafts(db, args.get("limit", 10))
     elif name == "set_status": return _set_status(db, args)
     elif name == "delete_article": return _delete_article(db, args.get("article_id",""))

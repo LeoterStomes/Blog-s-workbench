@@ -32,12 +32,14 @@ class AgentModeTest(unittest.TestCase):
 
         self.assertIn("search_articles", names)
         self.assertNotIn("create_draft", names)
+        self.assertNotIn("apply_humanized_article", names)
         self.assertNotIn("make_mindmap", names)
         self.assertNotIn("submit_capability_draft", names)
 
     def test_execute_mode_keeps_full_tool_set(self):
         tools = filter_tools_by_mode(TOOLS_SCHEMA, "execute")
         self.assertEqual(len(tools), len(TOOLS_SCHEMA))
+        self.assertIn("apply_humanized_article", {tool["function"]["name"] for tool in tools})
 
     def test_unknown_mode_fails_closed_to_readonly(self):
         self.assertEqual(normalize_agent_mode("unknown"), "readonly")
