@@ -787,7 +787,7 @@
           <div class="artifact-preview-heading">
             <div class="artifact-preview-title">
               <span>任务输出</span>
-              <small>{{ artifacts.length ? `${artifacts.length} 个产物` : isRunning ? '正在生成' : taskTrace.length ? `${taskTrace.length} 个步骤` : '等待生成' }}</small>
+              <small>{{ artifacts.length ? `${artifacts.length} 个产物` : isRunning ? '正在生成' : workflowNodes.length ? `${workflowNodes.length} 个节点` : '等待生成' }}</small>
             </div>
             <div class="artifact-mode-switch" role="tablist" aria-label="任务输出视图">
               <button
@@ -800,10 +800,10 @@
               <button
                 type="button"
                 role="tab"
-                :aria-selected="contextPanelMode === 'trace'"
-                :class="{ active: contextPanelMode === 'trace' }"
-                @click="contextPanelMode = 'trace'"
-              >轨迹 <span>{{ taskTrace.length }}</span></button>
+                :aria-selected="contextPanelMode === 'workflow'"
+                :class="{ active: contextPanelMode === 'workflow' }"
+                @click="contextPanelMode = 'workflow'"
+              >流程 <span>{{ workflowNodes.length }}</span></button>
             </div>
           </div>
 
@@ -863,37 +863,77 @@
             </div>
           </div>
 
-          <div v-else class="trace-panel" role="tabpanel">
-            <div v-if="taskTrace.length" class="trace-list">
+          <div v-else class="workflow-panel" role="tabpanel">
+            <div class="workflow-mini-toolbar">
+              <div class="workflow-live">
+                <i :class="{ running: isRunning }" />
+                <span>LIVE FLOW</span>
+                <small>{{ workflowStats.stages }} 阶段 · {{ workflowStats.tools }} 工具</small>
+              </div>
+              <button type="button" :disabled="!workflowStages.length" @click="openWorkflowCanvas()">
+                展开画布
+                <svg viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" /></svg>
+              </button>
+            </div>
+
+            <div v-if="workflowStages.length" class="workflow-mini-list">
               <article
-                v-for="item in taskTrace"
-                :key="item.eventId"
-                class="trace-item"
-                :class="[`trace-${item.type}`, item.status ? `trace-status-${item.status}` : '']"
+                v-for="(stage, stageIndex) in workflowStages"
+                :key="stage.id"
+                class="workflow-mini-stage"
+                :class="`status-${stage.status}`"
               >
-                <span class="trace-marker">{{ item.mark }}</span>
-                <div class="trace-copy">
-                  <div class="trace-heading">
-                    <strong>{{ item.title }}</strong>
-                    <small v-if="item.meta">{{ item.meta }}</small>
-                  </div>
-                  <p
-                    v-if="item.detail"
-                    :class="{ expanded: isTraceExpanded(item.eventId), clipped: traceNeedsExpansion(item) }"
-                  >{{ item.detail }}</p>
+                <div class="workflow-mini-rail">
+                  <span>{{ String(stageIndex + 1).padStart(2, '0') }}</span>
+                  <i />
+                </div>
+                <div class="workflow-mini-content">
                   <button
-                    v-if="traceNeedsExpansion(item)"
+                    v-if="stage.kind !== 'tools'"
                     type="button"
-                    class="trace-expand"
-                    @click="toggleTraceItem(item.eventId)"
-                  >{{ isTraceExpanded(item.eventId) ? '收起' : '展开完整内容' }}</button>
+                    class="workflow-mini-card"
+                    @click="selectWorkflowNode(stage.nodes[0].id, true)"
+                  >
+                    <span class="workflow-mini-card-head">
+                      <span class="workflow-node-mark" :class="`kind-${stage.nodes[0].kind}`">{{ stage.nodes[0].mark }}</span>
+                      <strong>{{ stage.nodes[0].title }}</strong>
+                      <i class="workflow-status-dot" :class="`status-${stage.status}`" />
+                    </span>
+                    <span class="workflow-mini-detail">{{ stage.nodes[0].detail || stage.detail }}</span>
+                    <small>{{ stage.nodes[0].meta }}</small>
+                  </button>
+
+                  <div v-else class="workflow-mini-batch">
+                    <button type="button" class="workflow-batch-head" @click="selectWorkflowNode(stage.nodes[0].id, true)">
+                      <span>{{ stage.title }}</span>
+                      <small>{{ stage.nodes.length > 1 ? `${stage.nodes.length} 个并行分支` : '单节点' }}</small>
+                      <svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6" /></svg>
+                    </button>
+                    <div class="workflow-mini-branches">
+                      <button
+                        v-for="node in stage.nodes"
+                        :key="node.id"
+                        type="button"
+                        class="workflow-mini-branch"
+                        :class="`status-${node.status}`"
+                        @click="selectWorkflowNode(node.id, true)"
+                      >
+                        <i class="workflow-status-dot" :class="`status-${node.status}`" />
+                        <span>
+                          <strong>{{ node.title }}</strong>
+                          <small>{{ node.meta || workflowStatusLabel(node.status) }}</small>
+                        </span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </article>
             </div>
-            <div v-else class="trace-empty">
+
+            <div v-else class="workflow-empty">
               <span>00</span>
-              <strong>还没有执行轨迹</strong>
-              <p>任务开始后，请求、分析、工具和产物会按发生顺序出现在这里。</p>
+              <strong>还没有执行流程</strong>
+              <p>任务开始后，需求、分析、工具分支和产物会组成可展开的工作流。</p>
             </div>
           </div>
         </section>
@@ -904,6 +944,178 @@
         </div>
       </aside>
     </div>
+
+    <Teleport to="body">
+      <Transition name="workflow-canvas">
+        <div v-if="workflowExpanded" class="workflow-overlay" @click.self="closeWorkflowCanvas">
+          <section
+            ref="workflowShellRef"
+            class="workflow-shell"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="workflow-canvas-title"
+            @keydown="trapWorkflowFocus"
+          >
+            <header class="workflow-header">
+              <div class="workflow-header-copy">
+                <span class="workflow-kicker"><i :class="{ running: isRunning }" /> LIVE WORKFLOW</span>
+                <h2 id="workflow-canvas-title">{{ taskTitle || '任务工作流' }}</h2>
+              </div>
+              <div class="workflow-header-actions">
+                <span class="workflow-run-state" :class="statusTone">{{ statusLabel }}</span>
+                <button ref="workflowCloseRef" type="button" aria-label="关闭工作流画布" @click="closeWorkflowCanvas">
+                  <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                </button>
+              </div>
+            </header>
+
+            <div class="workflow-overview">
+              <div class="workflow-stat"><strong>{{ workflowStats.stages }}</strong><span>编排阶段</span></div>
+              <div class="workflow-stat"><strong>{{ workflowStats.tools }}</strong><span>工具节点</span></div>
+              <div class="workflow-stat"><strong>{{ workflowStats.parallelBatches }}</strong><span>并行批次</span></div>
+              <div class="workflow-stat" :class="{ alert: workflowStats.errors }"><strong>{{ workflowStats.errors }}</strong><span>异常节点</span></div>
+              <div class="workflow-legend">
+                <span><i class="status-done" />完成</span>
+                <span><i class="status-running" />运行中</span>
+                <span><i class="status-error" />异常</span>
+              </div>
+            </div>
+
+            <div class="workflow-body">
+              <div class="workflow-canvas">
+                <div v-if="workflowStages.length" class="workflow-canvas-grid">
+                  <article
+                    v-for="(stage, stageIndex) in workflowStages"
+                    :key="stage.id"
+                    class="workflow-stage"
+                    :class="[`kind-${stage.kind}`, `status-${stage.status}`]"
+                  >
+                    <div class="workflow-stage-rail">
+                      <span>{{ String(stageIndex + 1).padStart(2, '0') }}</span>
+                      <i />
+                    </div>
+                    <div class="workflow-stage-main">
+                      <div class="workflow-stage-heading">
+                        <span>PHASE {{ String(stageIndex + 1).padStart(2, '0') }}</span>
+                        <small :class="`status-${stage.status}`">{{ workflowStatusLabel(stage.status) }}</small>
+                      </div>
+
+                      <template v-if="stage.kind === 'tools'">
+                        <div class="workflow-batch-title">
+                          <span><i />{{ stage.title }}</span>
+                          <small>{{ stage.nodes.length > 1 ? `${stage.nodes.length} 个并行分支` : '单工具节点' }}</small>
+                        </div>
+                        <div class="workflow-branches" :class="{ parallel: stage.nodes.length > 1 }">
+                          <button
+                            v-for="node in stage.nodes"
+                            :key="node.id"
+                            type="button"
+                            class="workflow-node-card tool-card"
+                            :class="[`status-${node.status}`, { selected: selectedWorkflowNode?.id === node.id }]"
+                            @click="selectWorkflowNode(node.id)"
+                          >
+                            <span class="workflow-node-mark kind-tool">{{ node.mark }}</span>
+                            <span class="workflow-node-copy">
+                              <strong>{{ node.title }}</strong>
+                              <small>{{ node.detail }}</small>
+                            </span>
+                            <span class="workflow-node-foot">
+                              <i class="workflow-status-dot" :class="`status-${node.status}`" />
+                              {{ node.meta || workflowStatusLabel(node.status) }}
+                            </span>
+                          </button>
+                        </div>
+                      </template>
+
+                      <button
+                        v-else
+                        type="button"
+                        class="workflow-node-card"
+                        :class="[`kind-${stage.nodes[0].kind}`, `status-${stage.status}`, { selected: selectedWorkflowNode?.id === stage.nodes[0].id }]"
+                        @click="selectWorkflowNode(stage.nodes[0].id)"
+                      >
+                        <span class="workflow-node-mark" :class="`kind-${stage.nodes[0].kind}`">{{ stage.nodes[0].mark }}</span>
+                        <span class="workflow-node-copy">
+                          <strong>{{ stage.nodes[0].title }}</strong>
+                          <small>{{ stage.nodes[0].detail }}</small>
+                        </span>
+                        <span class="workflow-node-foot">
+                          <i class="workflow-status-dot" :class="`status-${stage.status}`" />
+                          {{ stage.nodes[0].meta || workflowStatusLabel(stage.status) }}
+                        </span>
+                      </button>
+                    </div>
+                  </article>
+                </div>
+                <div v-else class="workflow-canvas-empty">
+                  <span>NO ACTIVE FLOW</span>
+                  <strong>任务开始后，这里会展开完整工作流。</strong>
+                </div>
+              </div>
+
+              <aside class="workflow-inspector">
+                <template v-if="selectedWorkflowNode">
+                  <div class="workflow-inspector-head">
+                    <span class="workflow-node-mark" :class="`kind-${selectedWorkflowNode.kind}`">{{ selectedWorkflowNode.mark }}</span>
+                    <div>
+                      <small>NODE INSPECTOR</small>
+                      <h3>{{ selectedWorkflowNode.title }}</h3>
+                    </div>
+                  </div>
+
+                  <div class="workflow-inspector-state" :class="`status-${selectedWorkflowNode.status}`">
+                    <i />
+                    {{ workflowStatusLabel(selectedWorkflowNode.status) }}
+                    <span v-if="selectedWorkflowNode.durationMs !== undefined">{{ formatWorkflowDuration(selectedWorkflowNode.durationMs) }}</span>
+                  </div>
+
+                  <dl class="workflow-inspector-meta">
+                    <div>
+                      <dt>类型</dt>
+                      <dd>{{ selectedWorkflowNode.kind === 'tool' ? '工具调用' : selectedWorkflowNode.meta }}</dd>
+                    </div>
+                    <div v-if="selectedWorkflowNode.callId">
+                      <dt>调用</dt>
+                      <dd class="mono">{{ selectedWorkflowNode.callId }}</dd>
+                    </div>
+                    <div v-if="selectedWorkflowNode.batchSize">
+                      <dt>批次</dt>
+                      <dd>{{ (selectedWorkflowNode.batchIndex || 0) + 1 }} / {{ selectedWorkflowNode.batchSize }}</dd>
+                    </div>
+                  </dl>
+
+                  <section v-if="selectedWorkflowArguments.length" class="workflow-inspector-section">
+                    <span>输入参数</span>
+                    <dl class="workflow-arguments">
+                      <div v-for="argument in selectedWorkflowArguments" :key="argument.key">
+                        <dt>{{ argument.key }}</dt>
+                        <dd>{{ argument.value }}</dd>
+                      </div>
+                    </dl>
+                  </section>
+
+                  <section class="workflow-inspector-section result">
+                    <span>{{ selectedWorkflowNode.kind === 'tool' ? '结果摘要' : '节点内容' }}</span>
+                    <p>{{ selectedWorkflowNode.detail || '暂无输出内容' }}</p>
+                  </section>
+
+                  <button
+                    v-if="selectedWorkflowNode.kind === 'artifact'"
+                    type="button"
+                    class="workflow-open-artifact"
+                    @click="selectedArtifactId = selectedWorkflowNode.eventId; contextPanelMode = 'preview'; closeWorkflowCanvas()"
+                  >在产物区打开</button>
+                </template>
+                <div v-else class="workflow-inspector-empty">
+                  <span>SELECT A NODE</span>
+                  <p>选择任一流程节点查看输入、状态和结果摘要。</p>
+                </div>
+              </aside>
+            </div>
+          </section>
+        </div>
+      </Transition>
+    </Teleport>
 
     <Transition name="blog-sheet">
       <section v-if="blogOpen" class="blog-overlay" aria-label="博客页面">
@@ -944,7 +1156,9 @@ interface SessionItem {
 type TaskStatus = 'idle' | 'connecting' | 'running' | 'done' | 'error' | 'cancelled';
 type TaskEventType = 'user' | 'thinking' | 'tool' | 'text' | 'artifact' | 'error';
 type AgentMode = 'readonly' | 'plan' | 'execute';
-type ContextPanelMode = 'preview' | 'trace';
+type ContextPanelMode = 'preview' | 'workflow';
+type WorkflowNodeStatus = 'running' | 'done' | 'error' | 'cancelled';
+type WorkflowStageKind = 'intent' | 'analysis' | 'tools' | 'response' | 'artifact' | 'error';
 
 interface TaskEvent {
   id: number;
@@ -952,21 +1166,47 @@ interface TaskEvent {
   content?: string;
   tool?: string;
   displayName?: string;
-  status?: 'running' | 'done' | 'error';
+  status?: WorkflowNodeStatus;
   args?: Record<string, unknown>;
   result?: unknown;
+  callId?: string;
+  round?: number;
+  batchId?: string;
+  batchIndex?: number;
+  batchSize?: number;
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
+  summary?: string;
   url?: string;
   format?: string;
 }
 
-interface TaskTraceItem {
+interface WorkflowNodeView {
+  id: string;
   eventId: number;
-  type: TaskEventType;
+  kind: Exclude<WorkflowStageKind, 'tools'> | 'tool';
   mark: string;
   title: string;
   detail: string;
-  meta?: string;
-  status?: 'running' | 'done' | 'error';
+  meta: string;
+  status: WorkflowNodeStatus;
+  args?: Record<string, unknown>;
+  callId?: string;
+  batchIndex?: number;
+  batchSize?: number;
+  durationMs?: number;
+}
+
+interface WorkflowStageView {
+  id: string;
+  kind: WorkflowStageKind;
+  title: string;
+  detail: string;
+  status: WorkflowNodeStatus;
+  nodes: WorkflowNodeView[];
+  batchId?: string;
+  round?: number;
 }
 
 type CapabilityKind = 'skill' | 'mcp' | 'prompt';
@@ -1024,6 +1264,8 @@ const blogOpen = ref(false);
 const blogUrl = ref('/');
 const composerRef = ref<HTMLTextAreaElement>();
 const taskFeedRef = ref<HTMLElement>();
+const workflowCloseRef = ref<HTMLButtonElement>();
+const workflowShellRef = ref<HTMLElement>();
 const user = ref(getUser());
 const taskEvents = ref<TaskEvent[]>([]);
 const sessionId = ref<string | null>(null);
@@ -1089,7 +1331,8 @@ const agentAvatar = ref('');
 const analysisExpanded = ref(true);
 const contextPanelMode = ref<ContextPanelMode>('preview');
 const selectedArtifactId = ref<number | null>(null);
-const expandedTraceIds = ref<number[]>([]);
+const workflowExpanded = ref(false);
+const selectedWorkflowNodeId = ref<string | null>(null);
 const settingsForm = ref({
   nickname: '',
   email: '',
@@ -1098,6 +1341,7 @@ const settingsForm = ref({
 });
 let eventSequence = 0;
 let articlePollTimer: number | null = null;
+let workflowTrigger: HTMLElement | null = null;
 
 const displayName = computed(() => user.value?.nickname || user.value?.username || '访客');
 const userInitial = computed(() => displayName.value.slice(0, 1).toUpperCase());
@@ -1118,70 +1362,78 @@ const outputText = computed(() => taskEvents.value
   .join('\n\n')
   .trim());
 const visibleTaskEvents = computed(() => taskEvents.value.filter(event => event.type !== 'tool'));
-const taskTrace = computed<TaskTraceItem[]>(() => taskEvents.value.map(event => {
-  if (event.type === 'user') {
-    return {
-      eventId: event.id,
-      type: event.type,
-      mark: '你',
-      title: '你的需求',
-      detail: event.content || '',
-      meta: '任务起点',
-    };
-  }
-  if (event.type === 'thinking') {
-    return {
-      eventId: event.id,
-      type: event.type,
-      mark: '析',
-      title: event.status === 'running' ? '正在分析任务' : '任务分析',
-      detail: event.content || (event.status === 'running' ? '正在梳理目标、资料和执行步骤。' : '分析已完成。'),
-      meta: event.status === 'running' ? '进行中' : '已完成',
-      status: event.status,
-    };
-  }
-  if (event.type === 'tool') {
-    return {
-      eventId: event.id,
-      type: event.type,
-      mark: '工',
-      title: event.displayName || event.tool || '工具调用',
-      detail: toolDescription(event),
-      meta: event.status === 'running' ? '调用中' : event.status === 'error' ? '失败' : '完成',
-      status: event.status,
-    };
-  }
-  if (event.type === 'text') {
-    return {
-      eventId: event.id,
-      type: event.type,
-      mark: 'AI',
-      title: 'Agent 回复',
-      detail: event.content || '',
-      meta: '已输出',
-      status: event.status,
-    };
-  }
-  if (event.type === 'artifact') {
-    return {
-      eventId: event.id,
-      type: event.type,
-      mark: '物',
-      title: event.content || '任务产物',
-      detail: `${String(event.format || 'file').toUpperCase()} 格式已写入当前任务。`,
-      meta: '产物',
-      status: 'done',
-    };
-  }
-  return {
-    eventId: event.id,
-    type: event.type,
-    mark: '!',
-    title: '执行异常',
-    detail: event.content || '任务执行失败。',
-    meta: '需要处理',
-    status: 'error',
-  };
+const workflowStages = computed<WorkflowStageView[]>(() => {
+  const stages: WorkflowStageView[] = [];
+  const toolStages = new Map<string, WorkflowStageView>();
+
+  taskEvents.value.forEach(event => {
+    const node = workflowNodeFromEvent(event);
+    if (event.type === 'tool') {
+      const batchId = event.batchId || (event.round ? `round-${event.round}` : `call-${event.id}`);
+      let stage = toolStages.get(batchId);
+      if (!stage) {
+        stage = {
+          id: `tools-${batchId}`,
+          kind: 'tools',
+          title: event.round ? `执行批次 ${String(event.round).padStart(2, '0')}` : '工具执行',
+          detail: '',
+          status: 'running',
+          nodes: [],
+          batchId,
+          round: event.round,
+        };
+        toolStages.set(batchId, stage);
+        stages.push(stage);
+      }
+      stage.nodes.push(node);
+      stage.status = aggregateWorkflowStatus(stage.nodes);
+      stage.detail = stage.nodes.length > 1
+        ? `${stage.nodes.length} 个并行分支`
+        : stage.nodes[0].detail;
+      return;
+    }
+
+    const kind = event.type === 'user'
+      ? 'intent'
+      : event.type === 'thinking'
+        ? 'analysis'
+        : event.type === 'text'
+          ? 'response'
+          : event.type === 'artifact'
+            ? 'artifact'
+            : 'error';
+    stages.push({
+      id: `stage-${event.id}`,
+      kind,
+      title: workflowStageTitle(kind),
+      detail: node.detail,
+      status: node.status,
+      nodes: [node],
+      round: event.round,
+    });
+  });
+
+  return stages;
+});
+const workflowNodes = computed(() => workflowStages.value.flatMap(stage => stage.nodes));
+const selectedWorkflowNode = computed(() => (
+  workflowNodes.value.find(node => node.id === selectedWorkflowNodeId.value)
+  || [...workflowNodes.value].reverse().find(node => node.status === 'running')
+  || workflowNodes.value[workflowNodes.value.length - 1]
+  || null
+));
+const selectedWorkflowArguments = computed(() => Object.entries(selectedWorkflowNode.value?.args || {})
+  .filter(([, value]) => value !== null && value !== undefined)
+  .map(([key, value]) => ({
+    key,
+    value: typeof value === 'string' ? value : JSON.stringify(value),
+  })));
+const workflowStats = computed(() => ({
+  stages: workflowStages.value.length,
+  tools: workflowNodes.value.filter(node => node.kind === 'tool').length,
+  running: workflowNodes.value.filter(node => node.status === 'running').length,
+  errors: workflowNodes.value.filter(node => node.status === 'error' || node.status === 'cancelled').length,
+  parallelBatches: workflowStages.value.filter(stage => stage.kind === 'tools' && stage.nodes.length > 1).length,
 }));
 const statusLabel = computed(() => ({
   idle: '空闲',
@@ -1413,7 +1665,8 @@ function startNewTask() {
   taskStatus.value = 'idle';
   contextPanelMode.value = 'preview';
   selectedArtifactId.value = null;
-  expandedTraceIds.value = [];
+  workflowExpanded.value = false;
+  selectedWorkflowNodeId.value = null;
   activeSection.value = 'overview';
   agentMode.value = defaultAgentMode.value;
   draft.value = '';
@@ -1519,6 +1772,200 @@ function toolDescription(event: TaskEvent) {
   return values.length ? values.join(' · ') : 'Agent 正在调用工作区能力';
 }
 
+function summarizeToolResult(result: unknown) {
+  let parsed = result;
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      // Plain text tool results are already useful as a summary.
+    }
+  }
+  if (typeof parsed === 'string') return parsed.slice(0, 260);
+  if (!parsed || typeof parsed !== 'object') return '';
+
+  const record = parsed as Record<string, any>;
+  const direct = record.error || record.reason || record.summary || record.message
+    || record.text || record.content || record.filename || record.url;
+  if (typeof direct === 'string' && direct.trim()) {
+    return direct.trim().slice(0, 260);
+  }
+  if (Array.isArray(record.results)) {
+    const titles = record.results
+      .slice(0, 2)
+      .map((item: any) => item?.title || item?.name || item?.url || '')
+      .filter(Boolean);
+    return `返回 ${record.results.length} 条结果${titles.length ? `：${titles.join('；')}` : ''}`;
+  }
+  return '工具执行完成';
+}
+
+function inferToolResultStatus(result: unknown): WorkflowNodeStatus {
+  if (!result || typeof result !== 'object') return 'done';
+  const record = result as Record<string, any>;
+  if (record.cancelled || record.skipped) return 'cancelled';
+  if (record.error || record.success === false || ['error', 'failed', 'timeout'].includes(String(record.status).toLowerCase())) {
+    return 'error';
+  }
+  return 'done';
+}
+
+function workflowNodeFromEvent(event: TaskEvent): WorkflowNodeView {
+  const baseStatus = event.status || (event.type === 'thinking' ? 'running' : 'done');
+  if (event.type === 'user') {
+    return {
+      id: `node-${event.id}`,
+      eventId: event.id,
+      kind: 'intent',
+      mark: '你',
+      title: '理解需求',
+      detail: event.content || '',
+      meta: '任务起点',
+      status: 'done',
+    };
+  }
+  if (event.type === 'thinking') {
+    return {
+      id: `node-${event.id}`,
+      eventId: event.id,
+      kind: 'analysis',
+      mark: '析',
+      title: event.status === 'running' ? '正在分析' : '分析任务',
+      detail: event.content || (event.status === 'running' ? '正在梳理目标、资料和执行步骤。' : '分析已完成。'),
+      meta: event.status === 'running' ? '分析中' : '分析完成',
+      status: baseStatus,
+    };
+  }
+  if (event.type === 'tool') {
+    const branchLabel = event.batchSize && event.batchSize > 1
+      ? `分支 ${(event.batchIndex || 0) + 1}/${event.batchSize}`
+      : '工具节点';
+    const duration = formatWorkflowDuration(event.durationMs);
+    return {
+      id: `node-${event.id}`,
+      eventId: event.id,
+      kind: 'tool',
+      mark: '工',
+      title: event.displayName || event.tool || '工具调用',
+      detail: event.summary || summarizeToolResult(event.result) || toolDescription(event),
+      meta: [branchLabel, duration].filter(Boolean).join(' · '),
+      status: baseStatus,
+      args: event.args,
+      callId: event.callId || event.tool,
+      batchIndex: event.batchIndex,
+      batchSize: event.batchSize,
+      durationMs: event.durationMs,
+    };
+  }
+  if (event.type === 'text') {
+    return {
+      id: `node-${event.id}`,
+      eventId: event.id,
+      kind: 'response',
+      mark: 'AI',
+      title: '整理回复',
+      detail: event.content || '',
+      meta: 'Agent 输出',
+      status: 'done',
+    };
+  }
+  if (event.type === 'artifact') {
+    return {
+      id: `node-${event.id}`,
+      eventId: event.id,
+      kind: 'artifact',
+      mark: '物',
+      title: event.content || '任务产物',
+      detail: `${String(event.format || 'file').toUpperCase()} 格式已写入当前任务。`,
+      meta: '产物就绪',
+      status: 'done',
+    };
+  }
+  return {
+    id: `node-${event.id}`,
+    eventId: event.id,
+    kind: 'error',
+    mark: '!',
+    title: '任务中断',
+    detail: event.content || '任务执行失败。',
+    meta: '需要处理',
+    status: 'error',
+  };
+}
+
+function workflowStageTitle(kind: WorkflowStageKind) {
+  return {
+    intent: '理解需求',
+    analysis: '分析任务',
+    tools: '执行工具',
+    response: '整理回复',
+    artifact: '交付产物',
+    error: '中断处理',
+  }[kind];
+}
+
+function aggregateWorkflowStatus(nodes: WorkflowNodeView[]): WorkflowNodeStatus {
+  if (nodes.some(node => node.status === 'running')) return 'running';
+  if (nodes.some(node => node.status === 'error')) return 'error';
+  if (nodes.length > 0 && nodes.every(node => node.status === 'cancelled')) return 'cancelled';
+  return 'done';
+}
+
+function workflowStatusLabel(status: WorkflowNodeStatus) {
+  return {
+    running: '运行中',
+    done: '完成',
+    error: '失败',
+    cancelled: '已取消',
+  }[status];
+}
+
+function formatWorkflowDuration(durationMs?: number) {
+  if (durationMs === undefined || durationMs === null) return '';
+  if (durationMs < 1000) return `${Math.max(1, Math.round(durationMs))} ms`;
+  if (durationMs < 60_000) return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)} s`;
+  const minutes = Math.floor(durationMs / 60_000);
+  const seconds = Math.round((durationMs % 60_000) / 1000);
+  return `${minutes}m ${seconds}s`;
+}
+
+function selectWorkflowNode(nodeId: string, openCanvas = false) {
+  selectedWorkflowNodeId.value = nodeId;
+  if (openCanvas) workflowExpanded.value = true;
+}
+
+function openWorkflowCanvas(nodeId?: string) {
+  const fallback = selectedWorkflowNode.value?.id || workflowNodes.value[workflowNodes.value.length - 1]?.id;
+  if (nodeId || fallback) selectedWorkflowNodeId.value = nodeId || fallback || null;
+  if (!workflowExpanded.value) workflowTrigger = document.activeElement as HTMLElement | null;
+  workflowExpanded.value = true;
+  nextTick(() => workflowCloseRef.value?.focus());
+}
+
+function closeWorkflowCanvas() {
+  workflowExpanded.value = false;
+  const trigger = workflowTrigger;
+  workflowTrigger = null;
+  nextTick(() => trigger?.focus());
+}
+
+function trapWorkflowFocus(event: KeyboardEvent) {
+  if (event.key !== 'Tab' || !workflowShellRef.value) return;
+  const focusable = [...workflowShellRef.value.querySelectorAll<HTMLElement>(
+    'button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+  )];
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 function artifactFromResult(result: any, fallbackFormat = '') {
   if (!result || typeof result !== 'object') return null;
   const url = result.url || result.downloadUrl || result.download_url;
@@ -1557,20 +2004,6 @@ function isHtmlArtifact(event: TaskEvent) {
   } catch {
     return false;
   }
-}
-
-function isTraceExpanded(eventId: number) {
-  return expandedTraceIds.value.includes(eventId);
-}
-
-function traceNeedsExpansion(item: TaskTraceItem) {
-  return item.detail.length > 180 || (item.detail.match(/\n/g) || []).length > 3;
-}
-
-function toggleTraceItem(eventId: number) {
-  expandedTraceIds.value = isTraceExpanded(eventId)
-    ? expandedTraceIds.value.filter(id => id !== eventId)
-    : [...expandedTraceIds.value, eventId];
 }
 
 async function uploadPendingFiles() {
@@ -1626,9 +2059,10 @@ async function runTask() {
   const token = getToken() || '';
   taskStatus.value = 'connecting';
   taskTitle.value ||= text.slice(0, 48);
-  contextPanelMode.value = 'trace';
+  contextPanelMode.value = 'workflow';
   selectedArtifactId.value = null;
-  expandedTraceIds.value = [];
+  workflowExpanded.value = false;
+  selectedWorkflowNodeId.value = null;
   pushEvent({ type: 'user', content: text });
   draft.value = '';
   resizeComposer();
@@ -1693,6 +2127,12 @@ async function runTask() {
               displayName: TOOL_NAMES[data.tool] || data.tool,
               status: 'running',
               args: data.args,
+              callId: data.call_id,
+              round: data.round,
+              batchId: data.batch_id,
+              batchIndex: data.batch_index,
+              batchSize: data.batch_size,
+              startedAt: data.started_at,
             });
           } catch {
             pushEvent({ type: 'tool', displayName: '工具调用', status: 'running' });
@@ -1700,10 +2140,23 @@ async function runTask() {
         } else if (eventName === 'tool_result') {
           try {
             const data = JSON.parse(raw);
-            const tool = [...toolEvents.value].reverse().find(item => item.tool === data.tool);
+            const tool = (data.call_id
+              ? [...toolEvents.value].reverse().find(item => item.callId === data.call_id)
+              : null)
+              || [...toolEvents.value].reverse().find(item => item.tool === data.tool && item.status === 'running')
+              || [...toolEvents.value].reverse().find(item => item.tool === data.tool);
             if (tool) {
-              tool.status = 'done';
+              tool.status = ['done', 'error', 'cancelled'].includes(data.status)
+                ? data.status
+                : inferToolResultStatus(data.result);
               tool.result = data.result;
+              tool.callId ||= data.call_id;
+              tool.round ??= data.round;
+              tool.batchId ||= data.batch_id;
+              tool.startedAt ||= data.started_at;
+              tool.finishedAt = data.finished_at;
+              tool.durationMs = data.duration_ms;
+              tool.summary = data.summary;
               const artifact = artifactFromResult(data.result);
               if (artifact && !artifacts.value.some(item => item.url === artifact.url)) {
                 const artifactId = pushEvent({
@@ -2161,6 +2614,10 @@ function handleShortcut(event: KeyboardEvent) {
     composerRef.value?.focus();
   }
   if (event.key === 'Escape') {
+    if (workflowExpanded.value) {
+      closeWorkflowCanvas();
+      return;
+    }
     closePanels();
     blogOpen.value = false;
   }
@@ -5514,9 +5971,10 @@ onUnmounted(() => {
 }
 
 .artifact-preview {
-  min-height: 0;
+  min-height: 196px;
   margin-top: 22px;
-  flex: 1;
+  flex: 1 0 auto;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
 }
@@ -5841,12 +6299,93 @@ onUnmounted(() => {
   font-size: calc(var(--wb-font-scale) * 9px);
 }
 
-.trace-panel {
+.workflow-panel {
   min-height: 0;
   flex: 1;
 }
 
-.trace-list {
+.workflow-mini-toolbar {
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workflow-live {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.workflow-live > i,
+.workflow-kicker > i {
+  width: 5px;
+  height: 5px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #aeb4c2;
+}
+
+.workflow-live > i.running,
+.workflow-kicker > i.running {
+  background: var(--wb-blue);
+  box-shadow: 0 0 0 4px rgba(91, 123, 255, 0.09);
+  animation: workflow-live-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes workflow-live-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(91, 123, 255, 0.05); }
+  50% { box-shadow: 0 0 0 6px rgba(91, 123, 255, 0.11); }
+}
+
+.workflow-live > span {
+  color: #47506a;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: calc(var(--wb-font-scale) * 6px);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.workflow-live > small {
+  min-width: 0;
+  overflow: hidden;
+  color: #a3a8b6;
+  font-size: calc(var(--wb-font-scale) * 6px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-mini-toolbar > button {
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--wb-line);
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.55);
+  color: #697186;
+  font: inherit;
+  font-size: calc(var(--wb-font-scale) * 7px);
+  cursor: pointer;
+}
+
+.workflow-mini-toolbar > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.workflow-mini-toolbar > button svg {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+}
+
+.workflow-mini-list {
   max-height: clamp(300px, 46vh, 660px);
   padding-right: 3px;
   overflow-y: auto;
@@ -5854,148 +6393,269 @@ onUnmounted(() => {
   scrollbar-color: rgba(110, 120, 154, 0.28) transparent;
 }
 
-.trace-item {
+.workflow-mini-stage {
   position: relative;
-  padding: 0 0 14px;
   display: grid;
-  grid-template-columns: 27px minmax(0, 1fr);
-  gap: 9px;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 7px;
+  padding-bottom: 9px;
 }
 
-.trace-item:last-child {
+.workflow-mini-stage:last-child {
   padding-bottom: 0;
 }
 
-.trace-item::after {
-  content: '';
-  position: absolute;
-  left: 13px;
-  top: 30px;
-  bottom: 0;
-  width: 1px;
-  background: #e2e5ec;
+.workflow-mini-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
 }
 
-.trace-item:last-child::after {
-  display: none;
-}
-
-.trace-marker {
-  position: relative;
-  z-index: 1;
-  width: 27px;
-  height: 27px;
-  border-radius: 9px;
+.workflow-mini-rail > span {
+  width: 22px;
+  height: 20px;
+  border-radius: 6px;
   display: grid;
   place-items: center;
   background: #eef1f7;
-  color: #7e869a;
-  font-size: calc(var(--wb-font-scale) * 7px);
-  font-weight: 750;
-  letter-spacing: -0.02em;
+  color: #9399aa;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: calc(var(--wb-font-scale) * 6px);
+  font-weight: 650;
 }
 
-.trace-user .trace-marker {
+.workflow-mini-rail > i {
+  width: 1px;
+  flex: 1;
+  min-height: 12px;
+  background: linear-gradient(#dfe3eb, #e9ebf1);
+}
+
+.workflow-mini-stage:last-child .workflow-mini-rail > i {
+  opacity: 0;
+}
+
+.workflow-mini-content {
+  min-width: 0;
+}
+
+.workflow-mini-card,
+.workflow-mini-batch {
+  width: 100%;
+  border: 1px solid var(--wb-line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.52);
+}
+
+.workflow-mini-card {
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workflow-mini-card:hover,
+.workflow-mini-branch:hover,
+.workflow-mini-batch .workflow-batch-head:hover {
+  border-color: rgba(91, 123, 255, 0.24);
+  background: rgba(91, 123, 255, 0.045);
+}
+
+.workflow-mini-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workflow-node-mark {
+  width: 25px;
+  height: 25px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: #edf0f6;
+  color: #6f788e;
+  font-size: calc(var(--wb-font-scale) * 7px);
+  font-weight: 750;
+}
+
+.workflow-node-mark.kind-intent {
   background: #eaf0ff;
   color: #4666d4;
 }
 
-.trace-thinking .trace-marker {
-  background: #fff4de;
-  color: #a46c19;
+.workflow-node-mark.kind-analysis {
+  background: #fff3dc;
+  color: #9d681d;
 }
 
-.trace-tool .trace-marker {
-  background: #e8f7ef;
-  color: #2a8058;
+.workflow-node-mark.kind-tool {
+  background: #e7f6ee;
+  color: #2d7d57;
 }
 
-.trace-text .trace-marker {
+.workflow-node-mark.kind-response {
   background: #30384d;
   color: white;
 }
 
-.trace-artifact .trace-marker {
+.workflow-node-mark.kind-artifact {
   background: rgba(91, 123, 255, 0.12);
   color: var(--wb-blue-deep);
 }
 
-.trace-error .trace-marker {
+.workflow-node-mark.kind-error {
   background: #fdecec;
   color: #c24343;
 }
 
-.trace-status-running .trace-marker {
-  box-shadow: 0 0 0 4px rgba(91, 123, 255, 0.08);
-  animation: trace-marker-pulse 1.8s ease-in-out infinite;
-}
-
-@keyframes trace-marker-pulse {
-  0%, 100% { box-shadow: 0 0 0 3px rgba(91, 123, 255, 0.05); }
-  50% { box-shadow: 0 0 0 6px rgba(91, 123, 255, 0.09); }
-}
-
-.trace-copy {
-  min-width: 0;
-  padding-top: 2px;
-}
-
-.trace-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.trace-heading strong {
+.workflow-mini-card-head > strong {
   min-width: 0;
   overflow: hidden;
-  color: #555c70;
+  flex: 1;
+  color: #545b70;
   font-size: calc(var(--wb-font-scale) * 8px);
   font-weight: 620;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.trace-heading small {
+.workflow-status-dot {
+  width: 5px;
+  height: 5px;
   flex-shrink: 0;
-  color: #a2a7b5;
+  border-radius: 50%;
+  display: inline-block;
+  background: #aeb4c2;
+}
+
+.workflow-status-dot.status-done {
+  background: #2da56c;
+}
+
+.workflow-status-dot.status-running {
+  background: var(--wb-blue);
+  box-shadow: 0 0 0 3px rgba(91, 123, 255, 0.1);
+  animation: workflow-live-pulse 1.8s ease-in-out infinite;
+}
+
+.workflow-status-dot.status-error {
+  background: #d24f4f;
+}
+
+.workflow-status-dot.status-cancelled {
+  background: #d49a3e;
+}
+
+.workflow-mini-detail {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #8c93a4;
+  font-size: calc(var(--wb-font-scale) * 7px);
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.workflow-mini-card > small {
+  color: #a4a9b6;
   font-size: calc(var(--wb-font-scale) * 6px);
 }
 
-.trace-copy p {
-  margin: 3px 0 0;
-  color: #8a91a3;
-  font-size: calc(var(--wb-font-scale) * 7px);
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-
-.trace-copy p.clipped:not(.expanded) {
-  display: -webkit-box;
+.workflow-mini-batch {
   overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
 }
 
-.trace-expand {
-  margin-top: 4px;
-  padding: 0;
+.workflow-batch-head {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 8px;
   border: 0;
+  border-bottom: 1px solid var(--wb-line);
+  display: flex;
+  align-items: center;
+  gap: 6px;
   background: transparent;
-  color: #657fce;
+  color: inherit;
   font: inherit;
-  font-size: calc(var(--wb-font-scale) * 7px);
+  text-align: left;
   cursor: pointer;
 }
 
-.trace-error .trace-heading strong,
-.trace-error .trace-copy p {
-  color: #b84b4b;
+.workflow-batch-head > span {
+  color: #596177;
+  font-size: calc(var(--wb-font-scale) * 8px);
+  font-weight: 620;
 }
 
-.trace-empty {
+.workflow-batch-head > small {
+  flex: 1;
+  color: #a1a7b5;
+  font-size: calc(var(--wb-font-scale) * 6px);
+}
+
+.workflow-batch-head > svg {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: #9aa1b0;
+  stroke-width: 1.8;
+}
+
+.workflow-mini-branches {
+  display: grid;
+  gap: 1px;
+  background: var(--wb-line);
+}
+
+.workflow-mini-branch {
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  background: rgba(255, 255, 255, 0.92);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workflow-mini-branch > i {
+  margin-top: 4px;
+}
+
+.workflow-mini-branch > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.workflow-mini-branch strong,
+.workflow-mini-branch small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-mini-branch strong {
+  color: #5c6377;
+  font-size: calc(var(--wb-font-scale) * 7px);
+  font-weight: 600;
+}
+
+.workflow-mini-branch small {
+  color: #a1a7b5;
+  font-size: calc(var(--wb-font-scale) * 6px);
+}
+
+.workflow-empty {
   min-height: 156px;
   padding: 20px;
   border: 1px dashed #d7dae2;
@@ -6008,7 +6668,7 @@ onUnmounted(() => {
   text-align: center;
 }
 
-.trace-empty > span {
+.workflow-empty > span {
   color: #c2c6d0;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: calc(var(--wb-font-scale) * 16px);
@@ -6016,18 +6676,703 @@ onUnmounted(() => {
   letter-spacing: 0.08em;
 }
 
-.trace-empty strong {
+.workflow-empty strong {
   margin-top: 7px;
   color: #8f96a7;
   font-size: calc(var(--wb-font-scale) * 9px);
 }
 
-.trace-empty p {
+.workflow-empty p {
   max-width: 200px;
   margin: 5px 0 0;
   color: #a9aebb;
   font-size: calc(var(--wb-font-scale) * 8px);
   line-height: 1.6;
+}
+
+.workflow-overlay {
+  --flow-blue: #5b7bff;
+  --flow-blue-deep: #4359d6;
+  --flow-ink: #20263a;
+  --flow-muted: #7c8498;
+  --flow-line: rgba(86, 97, 130, 0.14);
+  position: fixed;
+  inset: 0;
+  z-index: 160;
+  padding: clamp(12px, 2vw, 28px);
+  display: grid;
+  place-items: center;
+  background: rgba(25, 30, 48, 0.28);
+  backdrop-filter: blur(8px);
+  color: var(--flow-ink);
+}
+
+.workflow-shell {
+  width: min(1320px, calc(100vw - 32px));
+  height: min(820px, calc(100vh - 32px));
+  min-height: 560px;
+  overflow: hidden;
+  border: 1px solid rgba(72, 84, 120, 0.16);
+  border-radius: 22px;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(circle at 76% -10%, rgba(91, 123, 255, 0.12), transparent 30%),
+    #fbfbfd;
+  box-shadow: 0 34px 100px rgba(21, 28, 54, 0.3);
+}
+
+.workflow-header {
+  min-height: 92px;
+  padding: 19px 22px 17px;
+  border-bottom: 1px solid var(--flow-line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.workflow-header-copy {
+  min-width: 0;
+}
+
+.workflow-kicker {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #6e7892;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.workflow-kicker > i {
+  background: var(--flow-blue);
+}
+
+.workflow-header h2 {
+  max-width: min(780px, 64vw);
+  margin: 7px 0 0;
+  overflow: hidden;
+  color: var(--flow-ink);
+  font-size: clamp(20px, 1.8vw, 29px);
+  line-height: 1.2;
+  letter-spacing: -0.03em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-header-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.workflow-run-state {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  background: #eef0f5;
+  color: #727a8d;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.workflow-run-state.ready {
+  background: #e9f7ef;
+  color: #287d53;
+}
+
+.workflow-run-state.running {
+  background: #ebf0ff;
+  color: var(--flow-blue-deep);
+}
+
+.workflow-run-state.error {
+  background: #fdecec;
+  color: #b74747;
+}
+
+.workflow-header-actions > button {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--flow-line);
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.76);
+  color: #747c90;
+  cursor: pointer;
+}
+
+.workflow-header-actions > button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+}
+
+.workflow-overview {
+  min-height: 62px;
+  padding: 10px 22px;
+  border-bottom: 1px solid var(--flow-line);
+  display: flex;
+  align-items: stretch;
+  gap: 20px;
+  background: rgba(247, 248, 252, 0.82);
+}
+
+.workflow-stat {
+  min-width: 82px;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+}
+
+.workflow-stat + .workflow-stat {
+  padding-left: 20px;
+  border-left: 1px solid var(--flow-line);
+}
+
+.workflow-stat strong {
+  color: var(--flow-ink);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 18px;
+  font-weight: 550;
+}
+
+.workflow-stat span {
+  color: #9097a8;
+  font-size: 9px;
+}
+
+.workflow-stat.alert strong {
+  color: #bd4c4c;
+}
+
+.workflow-legend {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  color: #8f96a6;
+  font-size: 9px;
+}
+
+.workflow-legend span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.workflow-legend i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.workflow-legend i.status-done { background: #2da56c; }
+.workflow-legend i.status-running { background: var(--flow-blue); }
+.workflow-legend i.status-error { background: #d24f4f; }
+
+.workflow-body {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(250px, 24vw, 320px);
+}
+
+.workflow-canvas {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 28px clamp(22px, 4vw, 64px) 44px;
+  background-image: radial-gradient(rgba(83, 96, 132, 0.16) 0.7px, transparent 0.7px);
+  background-size: 22px 22px;
+  scrollbar-width: thin;
+}
+
+.workflow-canvas-grid {
+  width: min(820px, 100%);
+  margin: 0 auto;
+}
+
+.workflow-stage {
+  position: relative;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+}
+
+.workflow-stage-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.workflow-stage-rail > span {
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(91, 123, 255, 0.18);
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: #f7f9ff;
+  color: #6d7bb0;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  box-shadow: 0 3px 12px rgba(55, 70, 120, 0.06);
+}
+
+.workflow-stage.status-running .workflow-stage-rail > span {
+  border-color: rgba(91, 123, 255, 0.34);
+  background: var(--flow-blue);
+  color: white;
+  box-shadow: 0 0 0 5px rgba(91, 123, 255, 0.09);
+}
+
+.workflow-stage.status-error .workflow-stage-rail > span {
+  border-color: rgba(210, 79, 79, 0.25);
+  background: #fff0f0;
+  color: #bd4b4b;
+}
+
+.workflow-stage-rail > i {
+  width: 1px;
+  flex: 1;
+  min-height: 26px;
+  background: #dce1eb;
+}
+
+.workflow-stage:last-child .workflow-stage-rail > i {
+  background: linear-gradient(#dce1eb, transparent);
+}
+
+.workflow-stage-main {
+  min-width: 0;
+  padding: 0 0 26px;
+}
+
+.workflow-stage-heading {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.workflow-stage-heading > span {
+  color: #8f97aa;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+}
+
+.workflow-stage-heading > small {
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: #eef1f6;
+  color: #778093;
+  font-size: 8px;
+  text-transform: uppercase;
+}
+
+.workflow-stage-heading > small.status-running {
+  background: #eaf0ff;
+  color: var(--flow-blue-deep);
+}
+
+.workflow-stage-heading > small.status-error {
+  background: #fdecec;
+  color: #b64646;
+}
+
+.workflow-stage-heading > small.status-cancelled {
+  background: #fff5e6;
+  color: #9c6c23;
+}
+
+.workflow-node-card {
+  width: 100%;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--flow-line);
+  border-radius: 13px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.9);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  box-shadow: 0 7px 22px rgba(48, 59, 94, 0.05);
+  cursor: pointer;
+  transition: 150ms ease;
+}
+
+.workflow-node-card:hover,
+.workflow-node-card.selected {
+  border-color: rgba(91, 123, 255, 0.32);
+  box-shadow: 0 8px 24px rgba(57, 74, 130, 0.09), inset 0 0 0 1px rgba(91, 123, 255, 0.04);
+}
+
+.workflow-node-card.status-running {
+  border-color: rgba(91, 123, 255, 0.24);
+}
+
+.workflow-node-card.status-error {
+  border-color: rgba(210, 79, 79, 0.22);
+}
+
+.workflow-node-card .workflow-node-mark {
+  width: 30px;
+  height: 30px;
+}
+
+.workflow-node-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.workflow-node-copy strong {
+  overflow: hidden;
+  color: #40485e;
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-node-copy small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #7f879a;
+  font-size: 9px;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.workflow-node-foot {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #9ba2b1;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 8px;
+}
+
+.workflow-batch-title {
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workflow-batch-title > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #525b72;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.workflow-batch-title > span i {
+  width: 15px;
+  height: 1px;
+  background: #9aaedc;
+}
+
+.workflow-batch-title > small {
+  color: #9aa1b2;
+  font-size: 8px;
+}
+
+.workflow-branches {
+  display: grid;
+  gap: 9px;
+}
+
+.workflow-branches.parallel {
+  position: relative;
+  padding-top: 15px;
+  grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+}
+
+.workflow-branches.parallel::before {
+  content: '';
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  top: 0;
+  height: 1px;
+  background: #cfd7e8;
+}
+
+.workflow-branches.parallel .tool-card::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -15px;
+  width: 1px;
+  height: 15px;
+  background: #cfd7e8;
+}
+
+.workflow-branches .tool-card {
+  position: relative;
+}
+
+.workflow-branches .tool-card .workflow-node-foot {
+  grid-column: 1 / -1;
+  padding-top: 2px;
+  border-top: 1px dashed rgba(93, 104, 136, 0.1);
+}
+
+.workflow-inspector {
+  min-width: 0;
+  min-height: 0;
+  padding: 22px 20px;
+  border-left: 1px solid var(--flow-line);
+  overflow-y: auto;
+  background: rgba(247, 248, 252, 0.88);
+  scrollbar-width: thin;
+}
+
+.workflow-inspector-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.workflow-inspector-head .workflow-node-mark {
+  width: 32px;
+  height: 32px;
+}
+
+.workflow-inspector-head > div {
+  min-width: 0;
+}
+
+.workflow-inspector-head small {
+  color: #9ba2b2;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 8px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+}
+
+.workflow-inspector-head h3 {
+  margin: 4px 0 0;
+  overflow: hidden;
+  color: #363e53;
+  font-size: 15px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-inspector-state {
+  margin-top: 18px;
+  padding: 9px 10px;
+  border: 1px solid var(--flow-line);
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(255, 255, 255, 0.68);
+  color: #6e768a;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.workflow-inspector-state > i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #aeb4c2;
+}
+
+.workflow-inspector-state > span {
+  margin-left: auto;
+  color: #959cab;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 8px;
+  font-weight: 400;
+}
+
+.workflow-inspector-state.status-done > i { background: #2da56c; }
+.workflow-inspector-state.status-running > i {
+  background: var(--flow-blue);
+  box-shadow: 0 0 0 4px rgba(91, 123, 255, 0.1);
+}
+.workflow-inspector-state.status-error > i { background: #d24f4f; }
+.workflow-inspector-state.status-cancelled > i { background: #d49a3e; }
+
+.workflow-inspector-meta {
+  margin: 18px 0 0;
+  display: grid;
+  gap: 0;
+}
+
+.workflow-inspector-meta > div {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--flow-line);
+  display: grid;
+  grid-template-columns: 50px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.workflow-inspector-meta dt,
+.workflow-arguments dt {
+  color: #969dab;
+  font-size: 8px;
+}
+
+.workflow-inspector-meta dd,
+.workflow-arguments dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #5f6679;
+  font-size: 9px;
+  text-align: right;
+}
+
+.workflow-inspector-meta dd.mono {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 8px;
+}
+
+.workflow-inspector-section {
+  margin-top: 20px;
+}
+
+.workflow-inspector-section > span {
+  display: block;
+  margin-bottom: 8px;
+  color: #858da0;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.workflow-arguments {
+  margin: 0;
+  padding: 5px 10px;
+  border: 1px solid var(--flow-line);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.workflow-arguments > div {
+  padding: 7px 0;
+  display: grid;
+  gap: 3px;
+}
+
+.workflow-arguments > div + div {
+  border-top: 1px solid var(--flow-line);
+}
+
+.workflow-arguments dd {
+  max-height: 84px;
+  overflow: auto;
+  color: #5c6477;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 8px;
+  line-height: 1.55;
+  text-align: left;
+}
+
+.workflow-inspector-section.result p {
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  padding: 11px;
+  border: 1px solid var(--flow-line);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.62);
+  color: #626a7e;
+  font-size: 9px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.workflow-open-artifact {
+  width: 100%;
+  height: 32px;
+  margin-top: 16px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--flow-blue-deep);
+  color: white;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.workflow-inspector-empty,
+.workflow-canvas-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #8b93a5;
+  text-align: center;
+}
+
+.workflow-inspector-empty > span,
+.workflow-canvas-empty > span {
+  color: #a5abba;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.workflow-inspector-empty p {
+  max-width: 180px;
+  margin: 8px 0 0;
+  font-size: 9px;
+  line-height: 1.6;
+}
+
+.workflow-canvas-empty strong {
+  margin-top: 9px;
+  font-size: 12px;
+}
+
+.workflow-canvas-enter-active,
+.workflow-canvas-leave-active {
+  transition: opacity 180ms ease;
+}
+
+.workflow-canvas-enter-active .workflow-shell,
+.workflow-canvas-leave-active .workflow-shell {
+  transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 180ms ease;
+}
+
+.workflow-canvas-enter-from,
+.workflow-canvas-leave-to {
+  opacity: 0;
+}
+
+.workflow-canvas-enter-from .workflow-shell,
+.workflow-canvas-leave-to .workflow-shell {
+  transform: translateY(10px) scale(0.985);
+  opacity: 0;
 }
 
 .artifact-placeholder > svg {
@@ -6055,6 +7400,7 @@ onUnmounted(() => {
 
 .context-footnote {
   padding-top: 11px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -6502,6 +7848,70 @@ onUnmounted(() => {
   }
 }
 
+@media (max-width: 1100px) {
+  .workflow-shell {
+    width: calc(100vw - 24px);
+    height: calc(100vh - 24px);
+  }
+
+  .workflow-body {
+    grid-template-columns: minmax(0, 1fr) 250px;
+  }
+
+  .workflow-canvas {
+    padding-inline: 24px;
+  }
+
+  .workflow-legend {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .workflow-overlay {
+    padding: 8px;
+  }
+
+  .workflow-shell {
+    width: calc(100vw - 16px);
+    height: calc(100vh - 16px);
+    min-height: 0;
+    border-radius: 16px;
+  }
+
+  .workflow-overview {
+    gap: 12px;
+    overflow-x: auto;
+  }
+
+  .workflow-stat {
+    min-width: 68px;
+  }
+
+  .workflow-stat + .workflow-stat {
+    padding-left: 12px;
+  }
+
+  .workflow-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(260px, 1fr) minmax(150px, 34vh);
+  }
+
+  .workflow-inspector {
+    border-top: 1px solid var(--flow-line);
+    border-left: 0;
+  }
+
+  .workflow-branches.parallel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workflow-branches.parallel::before,
+  .workflow-branches.parallel .tool-card::before {
+    display: none;
+  }
+}
+
 :global(.dark-mode .workbench) {
   --wb-ink: #eef0f8;
   --wb-muted: #9ca3b8;
@@ -6531,7 +7941,10 @@ onUnmounted(() => {
 :global(.dark-mode .artifact-file-card),
 :global(.dark-mode .artifact-content),
 :global(.dark-mode .artifact-placeholder),
-:global(.dark-mode .trace-empty),
+:global(.dark-mode .workflow-empty),
+:global(.dark-mode .workflow-mini-card),
+:global(.dark-mode .workflow-mini-batch),
+:global(.dark-mode .workflow-mini-toolbar > button),
 :global(.dark-mode .article-feed-sync > button),
 :global(.dark-mode .article-row-actions button) {
   background: rgba(34, 37, 52, 0.78);
@@ -6552,8 +7965,10 @@ onUnmounted(() => {
 :global(.dark-mode .mode-card strong),
 :global(.dark-mode .artifact-selector-copy strong),
 :global(.dark-mode .artifact-file-card strong),
-:global(.dark-mode .trace-heading strong),
-:global(.dark-mode .trace-empty strong),
+:global(.dark-mode .workflow-mini-card-head > strong),
+:global(.dark-mode .workflow-empty strong),
+:global(.dark-mode .workflow-batch-head > span),
+:global(.dark-mode .workflow-mini-branch strong),
 :global(.dark-mode .article-copy > strong) {
   color: #e7eaf3;
 }
@@ -6561,7 +7976,8 @@ onUnmounted(() => {
 :global(.dark-mode .article-summary),
 :global(.dark-mode .article-meta-line),
 :global(.dark-mode .font-zoom span),
-:global(.dark-mode .trace-copy p) {
+:global(.dark-mode .workflow-mini-detail),
+:global(.dark-mode .workflow-mini-branch small) {
   color: #9ca3b8;
 }
 
@@ -6597,16 +8013,21 @@ onUnmounted(() => {
   color: white;
 }
 
-:global(.dark-mode .trace-item::after) {
+:global(.dark-mode .workflow-mini-rail > i) {
   background: rgba(255, 255, 255, 0.08);
 }
 
-:global(.dark-mode .trace-marker) {
+:global(.dark-mode .workflow-mini-branch) {
+  background: rgba(29, 32, 46, 0.96);
+}
+
+:global(.dark-mode .workflow-mini-rail > span),
+:global(.dark-mode .workflow-node-mark) {
   background: rgba(255, 255, 255, 0.07);
   color: #b7bece;
 }
 
-:global(.dark-mode .trace-text .trace-marker) {
+:global(.dark-mode .workflow-node-mark.kind-response) {
   background: #4a5570;
   color: white;
 }
@@ -6648,6 +8069,55 @@ onUnmounted(() => {
 :global(.dark-mode .thinking-label),
 :global(.dark-mode .avatar-setting-copy strong) {
   color: #e7eaf3;
+}
+
+:global(.dark-mode) .workflow-overlay {
+  --flow-ink: #eef0f8;
+  --flow-muted: #9ca3b8;
+  --flow-line: rgba(255, 255, 255, 0.09);
+  background: rgba(10, 13, 22, 0.55);
+}
+
+:global(.dark-mode) .workflow-shell,
+:global(.dark-mode) .workflow-header,
+:global(.dark-mode) .workflow-overview,
+:global(.dark-mode) .workflow-inspector {
+  background-color: #1c1f2e;
+}
+
+:global(.dark-mode) .workflow-shell {
+  background:
+    radial-gradient(circle at 76% -10%, rgba(91, 123, 255, 0.13), transparent 30%),
+    #1c1f2e;
+}
+
+:global(.dark-mode) .workflow-node-card,
+:global(.dark-mode) .workflow-inspector-state,
+:global(.dark-mode) .workflow-arguments,
+:global(.dark-mode) .workflow-inspector-section.result p {
+  border-color: rgba(255, 255, 255, 0.09);
+  background: rgba(38, 42, 58, 0.9);
+}
+
+:global(.dark-mode) .workflow-node-copy strong,
+:global(.dark-mode) .workflow-inspector-head h3,
+:global(.dark-mode) .workflow-stat strong,
+:global(.dark-mode) .workflow-batch-title > span,
+:global(.dark-mode) .workflow-inspector-meta dd,
+:global(.dark-mode) .workflow-arguments dd,
+:global(.dark-mode) .workflow-inspector-section.result p {
+  color: #e1e5ef;
+}
+
+:global(.dark-mode) .workflow-node-copy small,
+:global(.dark-mode) .workflow-stage-heading > span,
+:global(.dark-mode) .workflow-stat span,
+:global(.dark-mode) .workflow-batch-title > small {
+  color: #98a0b4;
+}
+
+:global(.dark-mode) .workflow-canvas {
+  background-image: radial-gradient(rgba(174, 185, 218, 0.15) 0.7px, transparent 0.7px);
 }
 
 @media (prefers-reduced-motion: reduce) {

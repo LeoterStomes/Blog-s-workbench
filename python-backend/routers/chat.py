@@ -2,6 +2,7 @@ import json
 import re
 import asyncio
 import copy
+import time
 from datetime import datetime, timezone
 
 import httpx
@@ -28,6 +29,7 @@ from services.asset_service import (
     imported_prompt_context,
     imported_skill_index,
 )
+from services.workflow_service import tool_result_workflow_meta
 
 # ── 加载 MCP Server ──
 _mcp_servers = load_mcp_servers()
@@ -414,6 +416,7 @@ async def stream_chat(
         called_tools: set[str] = set()  # 去重：已调用的工具+参数
         tool_counts: dict[str, int] = {}  # 每类工具调用次数
         failed_urls: dict[str, str] = {}  # 本轮已读取失败的 URL → 错误摘要（跨工具防重试）
+        call_started_at: dict[str, str] = {}
         URL_FETCH_TOOLS = {"read_url", "read_document", "summarize_url", "extract_images"}
 
         def _norm_url(u: str) -> str:
@@ -617,8 +620,6 @@ async def stream_chat(
                         called_tools.add(dedup_key)
                         tool_counts[tc["name"]] = tool_counts.get(tc["name"], 0) + 1
 
-                        # 发送 tool_call 事件
-                        yield f"event: tool_call\ndata: {json.dumps({'tool': tc['name'], 'args': args_parsed})}\n\n"
                         tasks_to_run.append({"tc": tc, "args": args_parsed, "dedup_key": dedup_key})
 
                     if not tasks_to_run:
@@ -630,8 +631,19 @@ async def stream_chat(
                             old_task.cancel()
                     round_tasks.clear()
 
+                    batch_id = f"session-{sid_int}-round-{tool_rounds}"
+                    started_at = datetime.now(timezone.utc).isoformat()
+                    for batch_index, task_item in enumerate(tasks_to_run):
+                        tc = task_item["tc"]
+                        call_id = tc.get("id") or f"{batch_id}-call-{batch_index + 1}"
+                        task_item["call_id"] = call_id
+                        task_item["started_at"] = started_at
+                        call_started_at[call_id] = started_at
+                        yield f"event: tool_call\ndata: {json.dumps({'tool': tc['name'], 'args': task_item['args'], 'call_id': call_id, 'round': tool_rounds, 'batch_id': batch_id, 'batch_index': batch_index, 'batch_size': len(tasks_to_run), 'started_at': started_at})}\n\n"
+
                     # 并行执行所有工具
-                    async def _run_one(tc, args_parsed, dedup_key):
+                    async def _run_one(tc, args_parsed, dedup_key, call_id):
+                        task_started = time.perf_counter()
                         norm_url = _norm_url(args_parsed["url"]) if isinstance(args_parsed.get("url"), str) else None
                         if tc["name"].startswith("mcp_"):
                             result = await call_mcp_tool(tc["name"], args_parsed) or json.dumps({"error": "MCP 工具未找到"}, ensure_ascii=False)
@@ -652,9 +664,19 @@ async def stream_chat(
                                 result = json.dumps({"error": "工具执行超时"}, ensure_ascii=False)
                             finally:
                                 tool_db.close()
-                        return {"tc": tc, "result": result, "dedup_key": dedup_key, "url": norm_url}
+                        return {
+                            "tc": tc,
+                            "result": result,
+                            "dedup_key": dedup_key,
+                            "url": norm_url,
+                            "call_id": call_id,
+                            "duration_ms": round((time.perf_counter() - task_started) * 1000),
+                        }
 
-                    round_tasks = [asyncio.create_task(_run_one(d["tc"], d["args"], d["dedup_key"])) for d in tasks_to_run]
+                    round_tasks = [
+                        asyncio.create_task(_run_one(d["tc"], d["args"], d["dedup_key"], d["call_id"]))
+                        for d in tasks_to_run
+                    ]
                     try:
                         batch_results = await asyncio.wait_for(asyncio.gather(*round_tasks), timeout=BATCH_TIMEOUT)
                     except asyncio.TimeoutError:
@@ -679,8 +701,9 @@ async def stream_chat(
                         if br is None:
                             continue
                         tc = br["tc"]
+                        call_id = br["call_id"]
                         result = br["result"]
-                        done_ids.add(tc.get("id", ""))
+                        done_ids.add(call_id)
 
                         # 跟踪连续失败
                         try:
@@ -708,7 +731,9 @@ async def stream_chat(
                             result_parsed = json.loads(result) if result else {}
                         except Exception:
                             result_parsed = {"text": str(result)}
-                        yield f"event: tool_result\ndata: {json.dumps({'tool': tc['name'], 'result': result_parsed})}\n\n"
+                        workflow_meta = tool_result_workflow_meta(result_parsed)
+                        finished_at = datetime.now(timezone.utc).isoformat()
+                        yield f"event: tool_result\ndata: {json.dumps({'tool': tc['name'], 'result': result_parsed, 'call_id': call_id, 'round': tool_rounds, 'batch_id': batch_id, 'status': workflow_meta['status'], 'summary': workflow_meta['summary'], 'started_at': call_started_at.get(call_id), 'finished_at': finished_at, 'duration_ms': br['duration_ms']})}\n\n"
                         await asyncio.sleep(0.01)
 
                         current_messages.append({
@@ -738,9 +763,12 @@ async def stream_chat(
                     # 发送未完成工具的结果（被取消/超时/跳过）
                     for d in tasks_to_run:
                         tc = d["tc"]
-                        if tc.get("id", "") in done_ids:
+                        if d["call_id"] in done_ids:
                             continue
-                        yield f"event: tool_result\ndata: {json.dumps({'tool': tc['name'], 'result': {'cancelled': True, 'reason': '批次超时或新轮次取消'}})}\n\n"
+                        finished_at = datetime.now(timezone.utc).isoformat()
+                        started_dt = datetime.fromisoformat(d["started_at"])
+                        duration_ms = round((datetime.now(timezone.utc) - started_dt).total_seconds() * 1000)
+                        yield f"event: tool_result\ndata: {json.dumps({'tool': tc['name'], 'result': {'cancelled': True, 'reason': '批次超时或新轮次取消'}, 'call_id': d['call_id'], 'round': tool_rounds, 'batch_id': batch_id, 'status': 'cancelled', 'summary': '批次超时或新轮次取消', 'started_at': d['started_at'], 'finished_at': finished_at, 'duration_ms': duration_ms})}\n\n"
                         await asyncio.sleep(0.01)
                         current_messages.append({
                             "role": "tool",

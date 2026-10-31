@@ -43,4 +43,12 @@ if (workbenchJs.includes('allow-same-origin')) {
   throw new Error('Untrusted artifact frames must not receive same-origin privileges');
 }
 
+if (!workbenchJs.includes('workflow-overlay') || !workbenchJs.includes('batch_id')) {
+  throw new Error('Workflow canvas and correlated tool batches must be present in the built renderer');
+}
+
+if (!/\.artifact-preview(?:\s|\[|:)[^{]*\{[^}]*flex-shrink\s*:\s*0/i.test(workbenchCss)) {
+  throw new Error('Artifact preview must not collapse over the context footnote in short windows');
+}
+
 console.log('Workbench CSS scope check passed');
